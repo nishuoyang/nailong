@@ -53,7 +53,7 @@ function handleSortChange(s: 'latest' | 'popular' | 'downloads') {
   <div class="max-w-7xl mx-auto px-4 py-8">
     <!-- Hero -->
     <div class="text-center mb-10">
-      <h1 class="text-4xl font-bold mb-3">🐉 Nai Long</h1>
+      <h1 class="text-4xl font-bold mb-3">🐉 奶龙</h1>
       <p class="text-gray-500 text-lg">发现、分享精彩图片</p>
     </div>
 

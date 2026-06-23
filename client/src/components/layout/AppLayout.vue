@@ -18,7 +18,7 @@ function handleLogout() {
       <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
         <div class="flex items-center gap-8">
           <router-link to="/" class="text-2xl font-bold text-blue-600 no-underline">
-            🐉 Nai Long
+            🐉 奶龙
           </router-link>
           <nav class="hidden md:flex items-center gap-6">
             <router-link to="/" class="text-gray-600 hover:text-blue-600 no-underline transition-colors">
@@ -75,7 +75,7 @@ function handleLogout() {
 
     <!-- Footer -->
     <footer class="bg-white border-t border-gray-200 mt-16 py-8 text-center text-sm text-gray-400">
-      <p>🐉 Nai Long - 图片展示平台</p>
+      <p>🐉 奶龙 - 图片展示平台</p>
     </footer>
   </div>
 </template>

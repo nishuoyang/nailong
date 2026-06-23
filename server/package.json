@@ -1,7 +1,7 @@
 {
   "name": "nailong-server",
   "version": "1.0.0",
-  "description": "Nai Long photo gallery backend",
+  "description": "奶龙图片展示平台后端",
   "private": true,
   "scripts": {
     "build": "nest build",

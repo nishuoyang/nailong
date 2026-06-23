@@ -21,6 +21,6 @@ async function bootstrap() {
   );
 
   await app.listen(3000);
-  console.log('Nai Long server running on http://localhost:3000');
+  console.log('奶龙 server running on http://localhost:3000');
 }
 bootstrap();

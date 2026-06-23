@@ -74,7 +74,7 @@ async function handleSubmit() {
 <template>
   <div class="max-w-md mx-auto px-4 py-16">
     <h1 class="text-2xl font-bold mb-2 text-center">注册</h1>
-    <p class="text-gray-400 text-center mb-8">加入 Nai Long，分享精彩图片</p>
+    <p class="text-gray-400 text-center mb-8">加入 奶龙，分享精彩图片</p>
 
     <el-alert v-if="errorMsg" :title="errorMsg" type="error" show-icon class="mb-4" closable @close="errorMsg = ''" />
 

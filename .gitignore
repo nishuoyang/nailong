@@ -12,3 +12,6 @@ credentials.json
 .npmrc
 .aws/
 .ssh/
+
+# 开发用静态资源
+static/
