@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  user
+  admin
+}
+
+enum ImageStatus {
+  pending
+  approved
+  rejected
+  offline
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  username     String     @unique @db.VarChar(32)
+  email        String     @unique @db.VarChar(255)
+  passwordHash String     @map("password_hash") @db.VarChar(255)
+  role         UserRole   @default(user)
+  avatarUrl    String?    @map("avatar_url") @db.VarChar(512)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  images    Image[]
+  likes     Like[]
+  downloads Download[]
+
+  @@map("users")
+}
+
+model Category {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(64)
+  slug        String   @unique @db.VarChar(64)
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  images ImagesOnCategories[]
+
+  @@map("categories")
+}
+
+model Image {
+  id            String      @id @default(uuid()) @db.Uuid
+  title         String      @db.VarChar(255)
+  description   String?     @db.Text
+  url           String      @db.VarChar(1024)
+  thumbnailUrl  String?     @map("thumbnail_url") @db.VarChar(1024)
+  userId        String      @map("user_id") @db.Uuid
+  status        ImageStatus @default(pending)
+  likeCount     Int         @default(0) @map("like_count")
+  downloadCount Int         @default(0) @map("download_count")
+  viewCount     Int         @default(0) @map("view_count")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  user       User                  @relation(fields: [userId], references: [id])
+  categories ImagesOnCategories[]
+  likes      Like[]
+  downloads  Download[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("images")
+}
+
+model ImagesOnCategories {
+  imageId    String @map("image_id") @db.Uuid
+  categoryId String @map("category_id") @db.Uuid
+
+  image    Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([imageId, categoryId])
+  @@map("images_categories")
+}
+
+model Like {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  imageId   String   @map("image_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id])
+  image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, imageId])
+  @@map("likes")
+}
+
+model Download {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  imageId   String   @map("image_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id])
+  image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  @@map("downloads")
+}
