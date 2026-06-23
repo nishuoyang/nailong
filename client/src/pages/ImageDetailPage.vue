@@ -38,12 +38,8 @@ const downloadMutation = useMutation({
       if (!old) return old
       return { ...old, downloadCount: res.data.data.downloadCount }
     })
-    // 触发浏览器下载
-    const a = document.createElement('a')
-    a.href = res.data.data.url
-    a.download = image.value?.title || 'image'
-    a.target = '_blank'
-    a.click()
+    // 通过服务端代理下载，解决跨域问题
+    window.open(`/api/images/${imageId}/file`, '_blank')
     ElMessage.success('下载开始')
   },
 })

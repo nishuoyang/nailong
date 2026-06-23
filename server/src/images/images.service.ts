@@ -104,6 +104,11 @@ export class ImagesService {
     return flattenCategories({ ...image, isLiked })
   }
 
+  // 供内部使用的原始查询，不做状态过滤和扁平化
+  async findByIdRaw(id: string) {
+    return this.prisma.image.findUnique({ where: { id } })
+  }
+
   async getCategories() {
     return this.prisma.category.findMany({
       orderBy: { name: 'asc' },
