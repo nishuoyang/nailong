@@ -40,6 +40,21 @@ export class MinioService implements OnModuleInit {
         await this.client.makeBucket(this.bucketName)
         this.logger.log(`Bucket "${this.bucketName}" created`)
       }
+
+      // 设置公开读策略，否则浏览器无法直接加载图片
+      const publicPolicy = {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Effect: 'Allow',
+            Principal: { AWS: ['*'] },
+            Action: ['s3:GetObject'],
+            Resource: [`arn:aws:s3:::${this.bucketName}/*`],
+          },
+        ],
+      }
+      await this.client.setBucketPolicy(this.bucketName, JSON.stringify(publicPolicy))
+      this.logger.log(`Bucket "${this.bucketName}" set to public read`)
     } catch (err) {
       this.logger.error(`Failed to ensure bucket "${this.bucketName}":`, err)
     }
