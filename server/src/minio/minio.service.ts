@@ -11,7 +11,7 @@ export class MinioService implements OnModuleInit {
   constructor(private configService: ConfigService) {
     this.client = new Minio.Client({
       endPoint: this.configService.get<string>('MINIO_ENDPOINT', 'localhost'),
-      port: this.configService.get<number>('MINIO_PORT', 9000),
+      port: Number(this.configService.get<string>('MINIO_PORT', '9000')),
       useSSL: false,
       accessKey: this.configService.get<string>('MINIO_ACCESS_KEY', 'minioadmin'),
       secretKey: this.configService.get<string>('MINIO_SECRET_KEY', 'minioadmin'),
@@ -29,7 +29,7 @@ export class MinioService implements OnModuleInit {
 
   get baseUrl(): string {
     const endpoint = this.configService.get<string>('MINIO_ENDPOINT', 'localhost')
-    const port = this.configService.get<number>('MINIO_PORT', 9000)
+    const port = Number(this.configService.get<string>('MINIO_PORT', '9000'))
     return `http://${endpoint}:${port}/${this.bucketName}`
   }
 

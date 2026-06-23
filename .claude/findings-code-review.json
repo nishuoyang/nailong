@@ -1,0 +1,50 @@
+[
+  {
+    "file": "e:\\AiProject\\nailong\\server\\src\\likes\\likes.service.ts",
+    "line": 25,
+    "summary": "toggleLike: redundant findUnique after $transaction — $transaction returns the updated image row as the second element in the result array (image.update result), but it's discarded and a separate SELECT is issued.",
+    "failure_scenario": "Every like/unlike adds an unnecessary DB round-trip. On a popular image receiving hundreds of toggles per minute, read load on PostgreSQL is doubled (~1-2ms extra latency per interaction)."
+  },
+  {
+    "file": "e:\\AiProject\\nailong\\server\\src\\likes\\likes.service.ts",
+    "line": 53,
+    "summary": "handleDownload: same redundant findUnique after $transaction — the image.update result inside the transaction already contains the updated downloadCount.",
+    "failure_scenario": "Each download wastes a SELECT immediately after the transaction commits. Under concurrent download traffic, this consumes an extra DB connection per request."
+  },
+  {
+    "file": "e:\\AiProject\\nailong\\server\\src\\auth\\jwt.strategy.ts",
+    "line": 21,
+    "summary": "JWT strategy validate() calls prisma.user.findUnique on every authenticated request. JWT payload already carries sub (userId) and role — the DB lookup defeats the stateless purpose of JWT and adds a query per request.",
+    "failure_scenario": "A single page with 10 API calls generates 10 redundant user lookups. At 1000 concurrent users, that is ~10,000 extra queries/sec against PostgreSQL. Could be mitigated with Redis cache or by trusting the verified JWT payload for non-sensitive operations."
+  },
+  {
+    "file": "e:\\AiProject\\nailong\\server\\src\\app.module.ts",
+    "line": 34,
+    "summary": "JwtAuthGuard and RolesGuard registered as global APP_GUARD providers, but also applied explicitly via @UseGuards on AdminController. Global guards already cover all routes — class-level application causes duplicate guard execution.",
+    "failure_scenario": "Every admin API call triggers JwtAuthGuard.canActivate twice (2 passport validations -> 2 DB user lookups from validate()) and RolesGuard twice. 100 admin requests/minute = 100 wasted DB queries."
+  },
+  {
+    "file": "e:\\AiProject\\nailong\\server\\src\\upload\\upload.service.ts",
+    "line": 16,
+    "summary": "UploadService directly instantiates new Minio.Client() rather than injecting a MinioService provider. The project plan (plan.md) targets Alibaba OSS / Tencent COS for production, but there is no abstraction layer — every minioClient call is hard-coupled to MinIO SDK.",
+    "failure_scenario": "Switching to OSS or COS for production requires rewriting UploadService entirely. Unit testing is also harder as the client is created in the constructor with no injection point for mocks. A MinioModule exporting MinioService as an injectable wrapper (with a common IStorageService interface) would fix this."
+  },
+  {
+    "file": "e:\\AiProject\\nailong\\server\\src\\common\\interceptors\\response.interceptor.ts",
+    "line": 13,
+    "summary": "ResponseInterceptor wraps all controller returns in { code, message, data }, but services already return structured shapes like { data: [...], meta: {...} }. This creates a doubled data.data nesting that varies by endpoint — inconsistent contract.",
+    "failure_scenario": "The list endpoint returns { code, message, data: { data: [...], meta: {...} } } while auth returns { code, message, data: { user, accessToken } }. Client code must handle inconsistent shapes per endpoint, and the interceptor's pass-through for objects with 'code' property is a fragile heuristic that could silently skip legitimate payloads."
+  },
+  {
+    "file": "e:\\AiProject\\nailong\\server\\src\\auth\\auth.service.ts",
+    "line": 18,
+    "summary": "AuthService calls prisma.user.findUnique/create directly instead of delegating to UsersService. User lookup logic (soft-delete awareness, caching, field projection) is duplicated across services.",
+    "failure_scenario": "Adding soft-delete filtering or Redis caching must be applied in both AuthService (register, login, refresh — 3+ call sites) and UsersService. If only one is patched, auth could return deleted users or bypass caching."
+  },
+  {
+    "file": "e:\\AiProject\\nailong\\server\\src\\images\\images.service.ts",
+    "line": 45,
+    "summary": "findAll unconditionally includes user and nested categories for every image in a paginated list. The list/waterfall UI may only need thumbnails and titles on initial load — multi-table JOINs per page are wasteful when the client doesn't render user/category data.",
+    "failure_scenario": "A page of 20 images generates a query with LEFT JOIN on users, then on ImageCategory, then on Category — potentially fetching 60+ related rows serialized into JSON. For mobile clients or search result pages showing only thumbnails + titles, this triples data transfer and DB join cost."
+  }
+]
