@@ -76,7 +76,10 @@ function handleLogout() {
 
     <!-- Footer -->
     <footer class="bg-white border-t border-gray-200 mt-16 py-8 text-center text-sm text-gray-400">
-      <p>🐉 奶龙 - 图片展示平台</p>
+      <p class="flex items-center justify-center gap-2">
+        <img src="/logo.jpeg" alt="奶龙" class="w-5 h-5 rounded-full object-cover inline-block" />
+        奶龙 - 图片展示平台
+      </p>
     </footer>
   </div>
 </template>
