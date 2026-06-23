@@ -17,8 +17,9 @@ function handleLogout() {
     <header class="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
       <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
         <div class="flex items-center gap-8">
-          <router-link to="/" class="text-2xl font-bold text-blue-600 no-underline">
-            🐉 奶龙
+          <router-link to="/" class="text-2xl font-bold text-blue-600 no-underline flex items-center gap-2">
+            <img src="/logo.jpeg" alt="奶龙" class="w-8 h-8 rounded-full object-cover" />
+            奶龙
           </router-link>
           <nav class="hidden md:flex items-center gap-6">
             <router-link to="/" class="text-gray-600 hover:text-blue-600 no-underline transition-colors">

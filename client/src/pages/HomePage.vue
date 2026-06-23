@@ -53,7 +53,10 @@ function handleSortChange(s: 'latest' | 'popular' | 'downloads') {
   <div class="max-w-7xl mx-auto px-4 py-8">
     <!-- Hero -->
     <div class="text-center mb-10">
-      <h1 class="text-4xl font-bold mb-3">🐉 奶龙</h1>
+      <div class="flex items-center justify-center gap-3 mb-3">
+        <img src="/logo.jpeg" alt="奶龙" class="w-12 h-12 rounded-full object-cover" />
+        <h1 class="text-4xl font-bold">奶龙</h1>
+      </div>
       <p class="text-gray-500 text-lg">发现、分享精彩图片</p>
     </div>
 
