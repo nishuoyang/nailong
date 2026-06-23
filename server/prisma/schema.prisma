@@ -52,8 +52,9 @@ model Image {
   id            String      @id @default(uuid()) @db.Uuid
   title         String      @db.VarChar(255)
   description   String?     @db.Text
-  url           String      @db.VarChar(1024)
-  thumbnailUrl  String?     @map("thumbnail_url") @db.VarChar(1024)
+  url            String      @db.VarChar(1024)
+  thumbnailUrl   String?     @map("thumbnail_url") @db.VarChar(1024)
+  thumbnailSmUrl String?     @map("thumbnail_sm_url") @db.VarChar(1024)
   userId        String      @map("user_id") @db.Uuid
   status        ImageStatus @default(pending)
   likeCount     Int         @default(0) @map("like_count")

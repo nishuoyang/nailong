@@ -26,16 +26,18 @@ request.interceptors.response.use(
     const authStore = useAuthStore()
 
     if (response?.status === 401 && !config._retry && authStore.refreshToken) {
+      config._retry = true
+
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           refreshQueue.push({ resolve, reject })
         }).then((token) => {
           config.headers.Authorization = `Bearer ${token}`
+          config._retry = true
           return request(config)
         })
       }
 
-      config._retry = true
       isRefreshing = true
 
       try {

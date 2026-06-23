@@ -5,6 +5,9 @@ import {
   UseInterceptors,
   UploadedFile,
   Body,
+  ParseFilePipe,
+  MaxFileSizeValidator,
+  FileTypeValidator,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
@@ -19,13 +22,30 @@ export class UploadController {
   @Post()
   @UseInterceptors(FileInterceptor('file'))
   async upload(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 }), // 10MB
+          new FileTypeValidator({ fileType: /^(image\/jpeg|image\/png|image\/webp)$/ }),
+        ],
+        fileIsRequired: true,
+      }),
+    )
+    file: Express.Multer.File,
     @CurrentUser() user: { id: string },
     @Body('title') title: string,
     @Body('description') description?: string,
     @Body('categoryIds') categoryIds?: string,
   ) {
-    const ids = categoryIds ? JSON.parse(categoryIds) : undefined
+    let ids: string[] | undefined
+    if (categoryIds) {
+      try {
+        ids = JSON.parse(categoryIds)
+        if (!Array.isArray(ids)) ids = undefined
+      } catch {
+        // categoryIds 格式无效，忽略
+      }
+    }
     return this.uploadService.uploadImage(file, user.id, title, description, ids)
   }
 }

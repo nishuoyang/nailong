@@ -1,6 +1,15 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { Prisma } from '@prisma/client'
+
+// 将 Prisma 嵌套的 categories 扁平化：{ category: { id, name, slug } }[] → { id, name, slug }[]
+function flattenCategories(image: any) {
+  if (!image?.categories) return image
+  return {
+    ...image,
+    categories: image.categories.map((c: any) => c.category),
+  }
+}
 
 @Injectable()
 export class ImagesService {
@@ -39,7 +48,7 @@ export class ImagesService {
           ? { downloadCount: 'desc' }
           : { createdAt: 'desc' }
 
-    const [data, total] = await Promise.all([
+    const [raw, total] = await Promise.all([
       this.prisma.image.findMany({
         where,
         include: {
@@ -53,10 +62,9 @@ export class ImagesService {
       this.prisma.image.count({ where }),
     ])
 
-    return {
-      data,
-      meta: { page, size, total, totalPages: Math.ceil(total / size) },
-    }
+    const data = raw.map(flattenCategories)
+
+    return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) } }
   }
 
   async findById(id: string, userId?: string) {
@@ -67,7 +75,17 @@ export class ImagesService {
         categories: { include: { category: true } },
       },
     })
-    if (!image) return null
+
+    if (!image) throw new NotFoundException('图片不存在')
+
+    // 非公开图片仅允许上传者和管理员查看
+    if (image.status !== 'approved') {
+      if (!userId) throw new NotFoundException('图片不存在')
+      const user = await this.prisma.user.findUnique({ where: { id: userId } })
+      if (!user || (user.id !== image.userId && user.role !== 'admin')) {
+        throw new NotFoundException('图片不存在')
+      }
+    }
 
     // 增加浏览次数
     await this.prisma.image.update({
@@ -83,7 +101,7 @@ export class ImagesService {
       isLiked = !!like
     }
 
-    return { ...image, isLiked }
+    return flattenCategories({ ...image, isLiked })
   }
 
   async getCategories() {

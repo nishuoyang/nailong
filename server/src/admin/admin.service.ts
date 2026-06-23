@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
-import { MinioService } from './minio.service'
+import { MinioService } from '../minio/minio.service'
 
 @Injectable()
 export class AdminService {
@@ -29,10 +29,7 @@ export class AdminService {
       this.prisma.image.count({ where }),
     ])
 
-    return {
-      data,
-      meta: { page, size, total, totalPages: Math.ceil(total / size) },
-    }
+    return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) } }
   }
 
   async updateImageStatus(id: string, status: string) {
@@ -44,6 +41,21 @@ export class AdminService {
     const image = await this.prisma.image.findUnique({ where: { id } })
     if (!image) throw new NotFoundException('图片不存在')
 
+    // 强制状态机转换规则
+    const allowedTransitions: Record<string, string[]> = {
+      pending: ['approved', 'rejected'],
+      approved: ['offline'],
+      rejected: [],
+      offline: ['approved'], // 下架后可重新上架
+    }
+
+    const allowed = allowedTransitions[image.status]
+    if (!allowed || !allowed.includes(status)) {
+      throw new BadRequestException(
+        `不允许从 "${image.status}" 转换为 "${status}"`,
+      )
+    }
+
     return this.prisma.image.update({
       where: { id },
       data: { status: status as any },
@@ -54,18 +66,19 @@ export class AdminService {
     const image = await this.prisma.image.findUnique({ where: { id } })
     if (!image) throw new NotFoundException('图片不存在')
 
-    // 从 MinIO 删除文件
-    try {
-      const urls: string[] = [image.url, image.thumbnailUrl].filter((u): u is string => !!u)
-      for (const url of urls) {
+    // 从 MinIO 删除所有关联文件
+    const urls = [image.url, image.thumbnailUrl, image.thumbnailSmUrl]
+    for (const url of urls) {
+      if (!url) continue
+      try {
         const parts = url.split('/')
         const filename = parts[parts.length - 1]
         if (filename) {
-          await this.minioService.removeObject('nailong-images', filename)
+          await this.minioService.removeObject(filename)
         }
+      } catch {
+        // MinIO 删除失败不阻塞数据库删除
       }
-    } catch {
-      // MinIO 删除失败不阻塞数据库删除
     }
 
     await this.prisma.image.delete({ where: { id } })

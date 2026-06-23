@@ -1,11 +1,9 @@
-import { Controller, Get, Patch, Delete, Post, Put, Param, Body, Query, UseGuards } from '@nestjs/common'
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
+import { Controller, Get, Patch, Delete, Post, Put, Param, Body, Query } from '@nestjs/common'
 import { RolesGuard } from '../common/guards/roles.guard'
 import { Roles } from '../common/decorators/roles.decorator'
 import { AdminService } from './admin.service'
 
 @Controller('admin')
-@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin')
 export class AdminController {
   constructor(private adminService: AdminService) {}

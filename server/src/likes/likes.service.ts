@@ -15,26 +15,24 @@ export class LikesService {
 
     if (existing) {
       // 取消点赞
-      await this.prisma.$transaction([
+      const [, updated] = await this.prisma.$transaction([
         this.prisma.like.delete({ where: { id: existing.id } }),
         this.prisma.image.update({
           where: { id: imageId },
           data: { likeCount: { decrement: 1 } },
         }),
       ])
-      const updated = await this.prisma.image.findUnique({ where: { id: imageId } })
-      return { liked: false, likeCount: updated!.likeCount }
+      return { liked: false, likeCount: updated.likeCount }
     } else {
       // 点赞
-      await this.prisma.$transaction([
+      const [, updated] = await this.prisma.$transaction([
         this.prisma.like.create({ data: { userId, imageId } }),
         this.prisma.image.update({
           where: { id: imageId },
           data: { likeCount: { increment: 1 } },
         }),
       ])
-      const updated = await this.prisma.image.findUnique({ where: { id: imageId } })
-      return { liked: true, likeCount: updated!.likeCount }
+      return { liked: true, likeCount: updated.likeCount }
     }
   }
 
@@ -42,7 +40,12 @@ export class LikesService {
     const image = await this.prisma.image.findUnique({ where: { id: imageId } })
     if (!image) throw new NotFoundException('图片不存在')
 
-    await this.prisma.$transaction([
+    // 仅允许下载已审核通过的图片
+    if (image.status !== 'approved') {
+      throw new NotFoundException('图片不可下载')
+    }
+
+    const [, updated] = await this.prisma.$transaction([
       this.prisma.download.create({ data: { userId, imageId } }),
       this.prisma.image.update({
         where: { id: imageId },
@@ -50,7 +53,6 @@ export class LikesService {
       }),
     ])
 
-    const updated = await this.prisma.image.findUnique({ where: { id: imageId } })
-    return { url: image.url, downloadCount: updated!.downloadCount }
+    return { url: image.url, downloadCount: updated.downloadCount }
   }
 }
