@@ -9,6 +9,12 @@ export interface RegisterParams {
   username: string
   email: string
   password: string
+  captchaSessionId: string
+  captchaText: string
+}
+
+export function getCaptcha() {
+  return request.get<{ code: number; data: { svg: string; sessionId: string } }>('/auth/captcha')
 }
 
 export interface AuthResponse {

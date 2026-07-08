@@ -13,4 +13,10 @@ export class RegisterDto {
   @MinLength(6)
   @MaxLength(64)
   password: string
+
+  @IsString()
+  captchaSessionId: string
+
+  @IsString()
+  captchaText: string
 }

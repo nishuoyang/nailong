@@ -1,10 +1,13 @@
-import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common'
+import { Injectable, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
 import * as bcrypt from 'bcrypt'
+import * as svgCaptcha from 'svg-captcha'
 import { PrismaService } from '../prisma/prisma.service'
+import { RedisService } from '../redis/redis.service'
 import { RegisterDto } from './dto/register.dto'
 import { LoginDto } from './dto/login.dto'
+import { randomBytes } from 'crypto'
 
 @Injectable()
 export class AuthService {
@@ -12,9 +15,38 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private redisService: RedisService,
   ) {}
 
+  async generateCaptcha() {
+    const captcha = svgCaptcha.create({
+      size: 4,
+      noise: 3,
+      color: true,
+      background: '#f0f2f5',
+    })
+
+    const sessionId = randomBytes(16).toString('hex')
+    // 存 Redis，5 分钟过期，不区分大小写
+    await this.redisService.client.set(
+      `captcha:${sessionId}`,
+      captcha.text.toLowerCase(),
+      'EX',
+      300,
+    )
+
+    return { svg: captcha.data, sessionId }
+  }
+
   async register(dto: RegisterDto) {
+    // 验证码校验
+    const stored = await this.redisService.client.get(`captcha:${dto.captchaSessionId}`)
+    if (!stored || stored !== dto.captchaText.toLowerCase()) {
+      throw new BadRequestException('验证码错误或已过期')
+    }
+    // 验证成功后删除，防止重复使用
+    await this.redisService.client.del(`captcha:${dto.captchaSessionId}`)
+
     const existing = await this.prisma.user.findFirst({
       where: {
         OR: [{ email: dto.email }, { username: dto.username }],

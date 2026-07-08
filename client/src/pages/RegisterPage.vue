@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { register } from '@/api/auth'
+import { register, getCaptcha } from '@/api/auth'
 import type { FormInstance, FormRules } from 'element-plus'
 
 const router = useRouter()
@@ -12,11 +12,15 @@ const formRef = ref<FormInstance>()
 const loading = ref(false)
 const errorMsg = ref('')
 
+const captchaSvg = ref('')
+const captchaSessionId = ref('')
+
 const form = reactive({
   username: '',
   email: '',
   password: '',
   confirmPassword: '',
+  captchaText: '',
 })
 
 const validateConfirm = (_rule: unknown, value: string, callback: (err?: Error) => void) => {
@@ -44,7 +48,23 @@ const rules: FormRules = {
     { required: true, message: '请确认密码', trigger: 'blur' },
     { validator: validateConfirm, trigger: 'blur' },
   ],
+  captchaText: [
+    { required: true, message: '请输入验证码', trigger: 'blur' },
+  ],
 }
+
+async function fetchCaptcha() {
+  try {
+    const res = await getCaptcha()
+    captchaSvg.value = res.data.data.svg
+    captchaSessionId.value = res.data.data.sessionId
+    form.captchaText = ''
+  } catch {
+    // ignore
+  }
+}
+
+onMounted(fetchCaptcha)
 
 async function handleSubmit() {
   if (!formRef.value) return
@@ -57,6 +77,8 @@ async function handleSubmit() {
         username: form.username,
         email: form.email,
         password: form.password,
+        captchaSessionId: captchaSessionId.value,
+        captchaText: form.captchaText,
       })
       const { user, accessToken, refreshToken } = res.data.data
       authStore.setTokens(accessToken, refreshToken)
@@ -64,6 +86,7 @@ async function handleSubmit() {
       router.push('/')
     } catch (err: any) {
       errorMsg.value = err.response?.data?.message || '注册失败，请稍后重试'
+      fetchCaptcha() // 刷新验证码
     } finally {
       loading.value = false
     }
@@ -90,6 +113,21 @@ async function handleSubmit() {
       </el-form-item>
       <el-form-item label="确认密码" prop="confirmPassword">
         <el-input v-model="form.confirmPassword" type="password" placeholder="再次输入密码" size="large" show-password />
+      </el-form-item>
+      <el-form-item label="验证码" prop="captchaText">
+        <div class="flex gap-3 items-start">
+          <el-input v-model="form.captchaText" placeholder="输入验证码" size="large" class="flex-1" />
+          <div class="flex items-center gap-2 shrink-0">
+            <div
+              class="w-28 h-10 bg-gray-100 rounded cursor-pointer border border-gray-200 overflow-hidden"
+              v-html="captchaSvg"
+              @click="fetchCaptcha"
+            />
+            <el-button text size="small" @click="fetchCaptcha" class="shrink-0">
+              换一张
+            </el-button>
+          </div>
+        </div>
       </el-form-item>
       <el-form-item>
         <el-button type="primary" native-type="submit" :loading="loading" class="w-full" size="large">
