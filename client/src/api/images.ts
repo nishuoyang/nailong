@@ -66,6 +66,10 @@ export function getLeaderboard() {
   return request.get<{ code: number; data: LeaderboardItem[] }>('/leaderboard')
 }
 
+export function getDailyRecommendation() {
+  return request.get<{ code: number; data: LeaderboardItem | null }>('/daily')
+}
+
 export function getCategories() {
   return request.get<{ code: number; data: Array<{ id: string; name: string; slug: string }> }>('/categories')
 }

@@ -66,6 +66,12 @@ export class ImagesController {
   }
 
   @Public()
+  @Get('daily')
+  async getDailyRecommendation() {
+    return this.imagesService.getDailyRecommendation()
+  }
+
+  @Public()
   @Get('leaderboard')
   async getLeaderboard() {
     return this.imagesService.getLeaderboard()

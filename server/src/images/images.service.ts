@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { RedisService } from '../redis/redis.service'
 import { Prisma } from '@prisma/client'
 
 // 将 Prisma 嵌套的 categories 扁平化：{ category: { id, name, slug } }[] → { id, name, slug }[]
@@ -13,7 +14,10 @@ function flattenCategories(image: any) {
 
 @Injectable()
 export class ImagesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private redisService: RedisService,
+  ) {}
 
   async findAll(params: {
     page?: number
@@ -104,6 +108,43 @@ export class ImagesService {
     }
 
     return flattenCategories({ ...image, isLiked })
+  }
+
+  // 每日推荐：从 approved 图片中随机选一张，Redis 缓存到次日 4 点
+  async getDailyRecommendation() {
+    const cacheKey = 'daily_recommendation'
+    const cached = await this.redisService.client.get(cacheKey)
+    if (cached) return JSON.parse(cached)
+
+    const count = await this.prisma.image.count({ where: { status: 'approved' } })
+    if (count === 0) return null
+
+    const skip = Math.floor(Math.random() * count)
+    const image = await this.prisma.image.findFirst({
+      where: { status: 'approved' },
+      select: {
+        id: true,
+        title: true,
+        thumbnailUrl: true,
+        url: true,
+        likeCount: true,
+        user: { select: { id: true, username: true } },
+      },
+      skip,
+      orderBy: { createdAt: 'desc' },
+    })
+
+    if (!image) return null
+
+    // 计算到次日凌晨 4 点的秒数
+    const now = new Date()
+    const next4am = new Date(now)
+    next4am.setDate(next4am.getDate() + 1)
+    next4am.setHours(4, 0, 0, 0)
+    const ttl = Math.floor((next4am.getTime() - now.getTime()) / 1000)
+
+    await this.redisService.client.set(cacheKey, JSON.stringify(image), 'EX', ttl)
+    return image
   }
 
   // 每周排行榜：按点赞数排名，过去 7 天的 approved 图片

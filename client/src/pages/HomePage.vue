@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
-import { getImages, getCategories, getLeaderboard } from '@/api/images'
+import { getImages, getCategories, getLeaderboard, getDailyRecommendation } from '@/api/images'
 import ImageCard from '@/components/common/ImageCard.vue'
 
 const route = useRoute()
@@ -32,6 +32,12 @@ const { data: imageData, isLoading } = useQuery({
 const { data: leaderboard } = useQuery({
   queryKey: ['leaderboard'],
   queryFn: () => getLeaderboard().then((r) => r.data.data),
+})
+
+const { data: daily } = useQuery({
+  queryKey: ['daily'],
+  queryFn: () => getDailyRecommendation().then((r) => r.data.data),
+  staleTime: 1000 * 60 * 30, // 30 分钟内不重复请求
 })
 
 function handleSearch() {
@@ -191,10 +197,35 @@ function handleSortChange(s: 'latest' | 'popular' | 'downloads') {
       </div>
     </div>
 
-    <!-- 右栏：预留 -->
+    <!-- 右栏：每日推荐 -->
     <aside class="w-56 shrink-0 hidden xl:block">
-      <div class="bg-white rounded-xl shadow-sm p-4 sticky top-20 text-center">
-        <p class="text-xs text-gray-300 py-8">更多功能<br />即将上线</p>
+      <div class="bg-white rounded-xl shadow-sm p-4 sticky top-20">
+        <h2 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1">
+          ⭐ 每日推荐
+        </h2>
+        <div v-if="!daily" class="text-xs text-gray-400 text-center py-4">
+          暂无推荐
+        </div>
+        <div v-else>
+          <router-link :to="`/images/${daily.id}`">
+            <img
+              :src="daily.thumbnailUrl || daily.url"
+              :alt="daily.title"
+              class="w-full aspect-[4/3] object-cover rounded-lg hover:opacity-90 transition-opacity mb-2"
+            />
+          </router-link>
+          <router-link
+            :to="`/images/${daily.id}`"
+            class="text-sm font-medium text-gray-800 hover:text-blue-600 no-underline line-clamp-2"
+          >
+            {{ daily.title }}
+          </router-link>
+          <div class="flex items-center justify-between mt-1 text-xs text-gray-400">
+            <span>{{ daily.user?.username }}</span>
+            <span>❤️ {{ daily.likeCount }}</span>
+          </div>
+        </div>
+        <p class="text-xs text-gray-300 mt-3 text-center">每日 4:00 更新</p>
       </div>
     </aside>
   </div>
