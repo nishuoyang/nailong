@@ -86,7 +86,12 @@ function handleDownload() {
           <!-- Author -->
           <div class="flex items-center gap-2">
             <span>👤</span>
-            <span>{{ image.user?.username }}</span>
+            <router-link
+              :to="`/users/${image.userId}`"
+              class="text-gray-500 hover:text-blue-600 no-underline transition-colors"
+            >
+              {{ image.user?.username }}
+            </router-link>
           </div>
 
           <!-- Stats -->
