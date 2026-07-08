@@ -12,7 +12,7 @@ function handleLogout() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-100">
+  <div class="min-h-screen bg-gray-100 flex flex-col">
     <!-- Header -->
     <header class="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
       <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -66,12 +66,12 @@ function handleLogout() {
     </header>
 
     <!-- Main Content -->
-    <main>
+    <main class="flex-1">
       <slot />
     </main>
 
     <!-- Footer -->
-    <footer class="bg-white border-t border-gray-200 mt-16 py-8 text-center text-sm text-gray-400">
+    <footer class="bg-white border-t border-gray-200 py-8 text-center text-sm text-gray-400">
       <p class="flex items-center justify-center gap-2">
         <img src="/logo.jpeg" alt="奶龙" class="w-5 h-5 rounded-full object-cover inline-block" />
         奶龙 - 图片展示平台
