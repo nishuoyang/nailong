@@ -62,7 +62,7 @@ function handleSortChange(s: 'latest' | 'popular' | 'downloads') {
   <!-- 三栏全宽布局 -->
   <div class="flex gap-6 px-4 py-8 max-w-[1400px] mx-auto">
     <!-- 左栏：每周排行榜 -->
-    <aside class="w-56 shrink-0">
+    <aside class="w-56 shrink-0 hidden xl:block">
       <div class="bg-white rounded-xl shadow-sm p-4 sticky top-20">
         <h2 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1">
           🏆 每周排行榜
