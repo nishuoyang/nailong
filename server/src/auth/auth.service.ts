@@ -21,9 +21,11 @@ export class AuthService {
   async generateCaptcha() {
     const captcha = svgCaptcha.create({
       size: 4,
-      noise: 3,
+      noise: 2,
+      width: 120,
+      height: 36,
       color: true,
-      background: '#f0f2f5',
+      background: '#f2f2f2',
     })
 
     const sessionId = randomBytes(16).toString('hex')

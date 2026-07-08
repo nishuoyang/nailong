@@ -119,7 +119,7 @@ async function handleSubmit() {
           <el-input v-model="form.captchaText" placeholder="输入验证码" size="large" class="flex-1" />
           <div class="flex items-center gap-2 shrink-0">
             <div
-              class="w-28 h-10 bg-gray-100 rounded cursor-pointer border border-gray-200 overflow-hidden"
+              class="h-10 bg-gray-100 rounded cursor-pointer border border-gray-200 flex items-center"
               v-html="captchaSvg"
               @click="fetchCaptcha"
             />
