@@ -110,6 +110,34 @@ export class ImagesService {
     return flattenCategories({ ...image, isLiked })
   }
 
+  // 精选推荐：仅管理员上传的 approved 图片
+  async getFeatured(params: { page?: number; size?: number }) {
+    const page = Number(params.page) || 1
+    const size = Math.min(Number(params.size) || 20, 100)
+
+    const where: Prisma.ImageWhereInput = {
+      status: 'approved',
+      user: { role: 'admin' },
+    }
+
+    const [raw, total] = await Promise.all([
+      this.prisma.image.findMany({
+        where,
+        include: {
+          user: { select: { id: true, username: true, avatarUrl: true } },
+          categories: { include: { category: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * size,
+        take: size,
+      }),
+      this.prisma.image.count({ where }),
+    ])
+
+    const data = raw.map(flattenCategories)
+    return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 } }
+  }
+
   // 每日推荐：从 approved 图片中随机选一张，Redis 缓存到次日 4 点
   async getDailyRecommendation() {
     const cacheKey = 'daily_recommendation'

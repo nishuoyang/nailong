@@ -22,6 +22,9 @@ function handleLogout() {
             奶龙
           </router-link>
           <nav class="hidden md:flex items-center gap-6">
+            <router-link to="/featured" class="text-gray-600 hover:text-blue-600 no-underline transition-colors">
+              精选
+            </router-link>
             <router-link to="/" class="text-gray-600 hover:text-blue-600 no-underline transition-colors">
               发现
             </router-link>

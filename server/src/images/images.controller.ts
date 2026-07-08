@@ -66,6 +66,15 @@ export class ImagesController {
   }
 
   @Public()
+  @Get('featured')
+  async getFeatured(
+    @Query('page') page?: number,
+    @Query('size') size?: number,
+  ) {
+    return this.imagesService.getFeatured({ page, size })
+  }
+
+  @Public()
   @Get('daily')
   async getDailyRecommendation() {
     return this.imagesService.getDailyRecommendation()

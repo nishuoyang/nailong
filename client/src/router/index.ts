@@ -15,6 +15,11 @@ const router = createRouter({
       component: () => import('@/pages/ImageDetailPage.vue'),
     },
     {
+      path: '/featured',
+      name: 'featured',
+      component: () => import('@/pages/FeaturedPage.vue'),
+    },
+    {
       path: '/search',
       name: 'search',
       component: () => import('@/pages/SearchPage.vue'),
