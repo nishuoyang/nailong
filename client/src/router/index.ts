@@ -69,8 +69,13 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to, _from) => {
+router.beforeEach(async (to, _from) => {
   const authStore = useAuthStore()
+
+  // 页面刷新后恢复用户信息
+  if (authStore.isLoggedIn && !authStore.user) {
+    await authStore.restoreUser()
+  }
 
   if (to.meta.requiresAuth && !authStore.isLoggedIn) {
     return { name: 'login', query: { redirect: to.fullPath } }
