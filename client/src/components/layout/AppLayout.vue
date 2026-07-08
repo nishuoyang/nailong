@@ -29,10 +29,6 @@ function handleLogout() {
         </div>
 
         <div class="flex items-center gap-4">
-          <router-link to="/search" class="text-gray-600 hover:text-blue-600 no-underline">
-            🔍
-          </router-link>
-
           <template v-if="authStore.isLoggedIn">
             <router-link to="/upload" class="text-sm text-gray-600 hover:text-blue-600 no-underline">
               上传
