@@ -10,7 +10,9 @@ export class AdminService {
   ) {}
 
   async findAllImages(params: { page?: number; size?: number; status?: string }) {
-    const { page = 1, size = 20, status } = params
+    const page = Number(params.page) || 1
+    const size = Math.min(Number(params.size) || 20, 100)
+    const { status } = params
 
     const where: any = {}
     if (status) where.status = status

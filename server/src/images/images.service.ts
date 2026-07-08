@@ -22,7 +22,9 @@ export class ImagesService {
     search?: string
     sort?: 'latest' | 'popular' | 'downloads'
   }) {
-    const { page = 1, size = 20, category, search, sort = 'latest' } = params
+    const page = Number(params.page) || 1
+    const size = Math.min(Number(params.size) || 20, 100)
+    const { category, search, sort = 'latest' } = params
 
     const where: Prisma.ImageWhereInput = {
       status: 'approved',
@@ -64,7 +66,7 @@ export class ImagesService {
 
     const data = raw.map(flattenCategories)
 
-    return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) } }
+    return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 } }
   }
 
   async findById(id: string, userId?: string) {
