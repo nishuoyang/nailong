@@ -24,6 +24,11 @@ enum BioStatus {
   pending
 }
 
+enum ImageSection {
+  general
+  other
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   username     String     @unique @db.VarChar(32)
@@ -63,8 +68,9 @@ model Image {
   thumbnailUrl   String?     @map("thumbnail_url") @db.VarChar(1024)
   thumbnailSmUrl String?     @map("thumbnail_sm_url") @db.VarChar(1024)
   userId        String      @map("user_id") @db.Uuid
-  status        ImageStatus @default(pending)
-  likeCount     Int         @default(0) @map("like_count")
+  status        ImageStatus  @default(pending)
+  section       ImageSection @default(general)
+  likeCount     Int          @default(0) @map("like_count")
   downloadCount Int         @default(0) @map("download_count")
   viewCount     Int         @default(0) @map("view_count")
   createdAt     DateTime    @default(now()) @map("created_at")

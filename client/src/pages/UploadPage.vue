@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { uploadImage } from '@/api/upload'
 import { getCategories } from '@/api/images'
@@ -8,6 +8,8 @@ import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules, UploadFile } from 'element-plus'
 
 const router = useRouter()
+const route = useRoute()
+const isOtherSection = route.query.section === 'other'
 
 const formRef = ref<FormInstance>()
 const uploading = ref(false)
@@ -54,6 +56,7 @@ async function handleSubmit() {
       formData.append('title', form.title)
       if (form.description) formData.append('description', form.description)
       if (form.categoryIds.length > 0) formData.append('categoryIds', JSON.stringify(form.categoryIds))
+      if (isOtherSection) formData.append('section', 'other')
       await uploadImage(formData)
       ElMessage.success('上传成功，等待管理员审核')
       router.push('/profile')
@@ -68,7 +71,12 @@ async function handleSubmit() {
 
 <template>
   <div class="max-w-3xl mx-auto px-4 py-8">
-    <h1 class="text-2xl font-bold mb-8">上传图片</h1>
+    <h1 class="text-2xl font-bold mb-8">
+      {{ isOtherSection ? '上传其他推荐图片' : '上传图片' }}
+    </h1>
+    <p v-if="isOtherSection" class="text-gray-500 text-sm -mt-6 mb-6">
+      上传到「其他推荐」板块，展示与奶龙主题无关的图片
+    </p>
 
     <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
       <!-- Preview -->

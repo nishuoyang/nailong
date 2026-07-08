@@ -66,6 +66,15 @@ export class ImagesController {
   }
 
   @Public()
+  @Get('other')
+  async getOther(
+    @Query('page') page?: number,
+    @Query('size') size?: number,
+  ) {
+    return this.imagesService.getOther({ page, size })
+  }
+
+  @Public()
   @Get('featured')
   async getFeatured(
     @Query('page') page?: number,

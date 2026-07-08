@@ -74,6 +74,10 @@ export function getFeatured(params: { page?: number; size?: number }) {
   return request.get<{ code: number; data: ImageItem[]; meta: PaginatedResponse<ImageItem>['meta'] }>('/featured', { params })
 }
 
+export function getOther(params: { page?: number; size?: number }) {
+  return request.get<{ code: number; data: ImageItem[]; meta: PaginatedResponse<ImageItem>['meta'] }>('/other', { params })
+}
+
 export function getCategories() {
   return request.get<{ code: number; data: Array<{ id: string; name: string; slug: string }> }>('/categories')
 }

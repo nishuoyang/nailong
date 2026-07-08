@@ -16,6 +16,7 @@ export class UploadService {
     title: string,
     description?: string,
     categoryIds?: string[],
+    section?: string,
   ) {
     if (!file) {
       throw new BadRequestException('请选择要上传的图片')
@@ -79,6 +80,7 @@ export class UploadService {
         thumbnailSmUrl: `${baseUrl}/${smName}`,
         userId,
         status: 'pending',
+        section: section === 'other' ? 'other' : 'general',
         categories: categoryIds?.length
           ? {
               create: categoryIds.map((categoryId) => ({ categoryId })),

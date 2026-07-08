@@ -32,6 +32,7 @@ export class ImagesService {
 
     const where: Prisma.ImageWhereInput = {
       status: 'approved',
+      section: 'general',
     }
 
     if (category) {
@@ -110,6 +111,34 @@ export class ImagesService {
     return flattenCategories({ ...image, isLiked })
   }
 
+  // 其他推荐：section='other' 的 approved 图片
+  async getOther(params: { page?: number; size?: number }) {
+    const page = Number(params.page) || 1
+    const size = Math.min(Number(params.size) || 20, 100)
+
+    const where: Prisma.ImageWhereInput = {
+      status: 'approved',
+      section: 'other',
+    }
+
+    const [raw, total] = await Promise.all([
+      this.prisma.image.findMany({
+        where,
+        include: {
+          user: { select: { id: true, username: true, avatarUrl: true } },
+          categories: { include: { category: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * size,
+        take: size,
+      }),
+      this.prisma.image.count({ where }),
+    ])
+
+    const data = raw.map(flattenCategories)
+    return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 } }
+  }
+
   // 精选推荐：仅管理员上传的 approved 图片
   async getFeatured(params: { page?: number; size?: number }) {
     const page = Number(params.page) || 1
@@ -144,12 +173,14 @@ export class ImagesService {
     const cached = await this.redisService.client.get(cacheKey)
     if (cached) return JSON.parse(cached)
 
-    const count = await this.prisma.image.count({ where: { status: 'approved' } })
+    const count = await this.prisma.image.count({
+      where: { status: 'approved', section: 'general' },
+    })
     if (count === 0) return null
 
     const skip = Math.floor(Math.random() * count)
     const image = await this.prisma.image.findFirst({
-      where: { status: 'approved' },
+      where: { status: 'approved', section: 'general' },
       select: {
         id: true,
         title: true,
@@ -183,6 +214,7 @@ export class ImagesService {
     const images = await this.prisma.image.findMany({
       where: {
         status: 'approved',
+        section: 'general',
         createdAt: { gte: weekAgo },
       },
       select: {

@@ -20,6 +20,11 @@ const router = createRouter({
       component: () => import('@/pages/FeaturedPage.vue'),
     },
     {
+      path: '/other',
+      name: 'other',
+      component: () => import('@/pages/OtherPage.vue'),
+    },
+    {
       path: '/search',
       name: 'search',
       component: () => import('@/pages/SearchPage.vue'),

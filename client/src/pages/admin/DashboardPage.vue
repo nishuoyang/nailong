@@ -37,7 +37,7 @@ const menuItems = [
     </template>
 
     <!-- Stats -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
       <div class="bg-white rounded-xl shadow-sm p-6">
         <p class="text-3xl font-bold text-orange-500">{{ pendingData?.meta?.total || 0 }}</p>
         <p class="text-gray-500 text-sm mt-1">待审核图片</p>
@@ -48,6 +48,15 @@ const menuItems = [
         <p class="text-gray-500 text-sm mt-1">图片总数</p>
         <router-link to="/admin/images" class="text-blue-600 text-sm no-underline">查看全部 →</router-link>
       </div>
+    </div>
+
+    <!-- Other Upload -->
+    <div class="bg-white rounded-xl shadow-sm p-6">
+      <h2 class="text-lg font-bold mb-2">其他推荐上传</h2>
+      <p class="text-gray-500 text-sm mb-4">上传与奶龙主题无关的图片，展示在「其他推荐」页面</p>
+      <router-link to="/upload?section=other">
+        <el-button type="primary">上传其他推荐图片</el-button>
+      </router-link>
     </div>
   </ProfileLayout>
 </template>
