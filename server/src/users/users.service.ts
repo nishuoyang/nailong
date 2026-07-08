@@ -63,6 +63,26 @@ export class UsersService {
     })
   }
 
+  async getUserImages(userId: string, page = 1, size = 20) {
+    const pageNum = Number(page) || 1
+    const sizeNum = Math.min(Number(size) || 20, 100)
+
+    const [data, total] = await Promise.all([
+      this.prisma.image.findMany({
+        where: { userId, status: 'approved' },
+        include: {
+          categories: { include: { category: true } },
+          user: { select: { id: true, username: true, avatarUrl: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (pageNum - 1) * sizeNum,
+        take: sizeNum,
+      }),
+      this.prisma.image.count({ where: { userId, status: 'approved' } }),
+    ])
+    return { data, meta: { page: pageNum, size: sizeNum, total, totalPages: Math.ceil(total / sizeNum) || 1 } }
+  }
+
   async approveBio(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (!user || !user.bio) throw new NotFoundException('用户或 bio 不存在')

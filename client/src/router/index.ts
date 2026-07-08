@@ -44,6 +44,11 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/users/:id',
+      name: 'user-profile',
+      component: () => import('@/pages/UserProfilePage.vue'),
+    },
+    {
       path: '/admin',
       name: 'admin-dashboard',
       component: () => import('@/pages/admin/DashboardPage.vue'),

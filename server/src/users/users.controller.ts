@@ -48,4 +48,14 @@ export class UsersController {
   async approveBio(@Param('id') id: string) {
     return this.usersService.approveBio(id)
   }
+
+  @Public()
+  @Get(':id/images')
+  async getUserImages(
+    @Param('id') id: string,
+    @Query('page') page?: number,
+    @Query('size') size?: number,
+  ) {
+    return this.usersService.getUserImages(id, page, size)
+  }
 }
