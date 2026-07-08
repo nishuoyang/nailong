@@ -106,6 +106,31 @@ export class ImagesService {
     return flattenCategories({ ...image, isLiked })
   }
 
+  // 每周排行榜：按点赞数排名，过去 7 天的 approved 图片
+  async getLeaderboard(limit = 10) {
+    const weekAgo = new Date()
+    weekAgo.setDate(weekAgo.getDate() - 7)
+
+    const images = await this.prisma.image.findMany({
+      where: {
+        status: 'approved',
+        createdAt: { gte: weekAgo },
+      },
+      select: {
+        id: true,
+        title: true,
+        likeCount: true,
+        thumbnailUrl: true,
+        url: true,
+        user: { select: { id: true, username: true } },
+      },
+      orderBy: { likeCount: 'desc' },
+      take: limit,
+    })
+
+    return images
+  }
+
   // 供内部使用的原始查询，不做状态过滤和扁平化
   async findByIdRaw(id: string) {
     return this.prisma.image.findUnique({ where: { id } })

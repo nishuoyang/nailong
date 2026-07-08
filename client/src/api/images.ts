@@ -53,6 +53,19 @@ export function downloadImage(id: string) {
   return request.post<{ code: number; data: { url: string; downloadCount: number } }>(`/images/${id}/download`)
 }
 
+export interface LeaderboardItem {
+  id: string
+  title: string
+  likeCount: number
+  thumbnailUrl: string | null
+  url: string
+  user: { id: string; username: string }
+}
+
+export function getLeaderboard() {
+  return request.get<{ code: number; data: LeaderboardItem[] }>('/leaderboard')
+}
+
 export function getCategories() {
   return request.get<{ code: number; data: Array<{ id: string; name: string; slug: string }> }>('/categories')
 }

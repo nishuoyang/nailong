@@ -66,6 +66,12 @@ export class ImagesController {
   }
 
   @Public()
+  @Get('leaderboard')
+  async getLeaderboard() {
+    return this.imagesService.getLeaderboard()
+  }
+
+  @Public()
   @Get('categories')
   async getCategories() {
     return this.imagesService.getCategories()
