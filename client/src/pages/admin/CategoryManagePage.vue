@@ -5,6 +5,7 @@ import { getCategories } from '@/api/images'
 import { createCategory, updateCategory, deleteCategory } from '@/api/admin'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
+import ProfileLayout from '@/components/layout/ProfileLayout.vue'
 
 const queryClient = useQueryClient()
 
@@ -21,17 +22,13 @@ const { data: categories, isLoading } = useQuery({
 })
 
 function openCreate() {
-  editingId.value = null
-  dialogTitle.value = '新增分类'
-  form.value = { name: '', slug: '', description: '' }
-  dialogVisible.value = true
+  editingId.value = null; dialogTitle.value = '新增分类'
+  form.value = { name: '', slug: '', description: '' }; dialogVisible.value = true
 }
 
 function openEdit(cat: { id: string; name: string; slug: string; description: string | null }) {
-  editingId.value = cat.id
-  dialogTitle.value = '编辑分类'
-  form.value = { name: cat.name, slug: cat.slug, description: cat.description || '' }
-  dialogVisible.value = true
+  editingId.value = cat.id; dialogTitle.value = '编辑分类'
+  form.value = { name: cat.name, slug: cat.slug, description: cat.description || '' }; dialogVisible.value = true
 }
 
 async function handleSubmit() {
@@ -40,62 +37,62 @@ async function handleSubmit() {
     if (!valid) return
     submitting.value = true
     try {
-      if (editingId.value) {
-        await updateCategory(editingId.value, form.value)
-        ElMessage.success('更新成功')
-      } else {
-        await createCategory(form.value)
-        ElMessage.success('创建成功')
-      }
+      if (editingId.value) { await updateCategory(editingId.value, form.value); ElMessage.success('更新成功') }
+      else { await createCategory(form.value); ElMessage.success('创建成功') }
       dialogVisible.value = false
       queryClient.invalidateQueries({ queryKey: ['admin-categories'] })
       queryClient.invalidateQueries({ queryKey: ['categories'] })
-    } catch (err: any) {
-      ElMessage.error(err.response?.data?.message || '操作失败')
-    } finally {
-      submitting.value = false
-    }
+    } catch (err: any) { ElMessage.error(err.response?.data?.message || '操作失败') }
+    finally { submitting.value = false }
   })
 }
 
 async function handleDelete(id: string, name: string) {
   try {
     await ElMessageBox.confirm(`确定要删除分类"${name}"吗？`, '确认删除', {
-      type: 'warning',
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
+      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
     })
-    await deleteCategory(id)
-    ElMessage.success('已删除')
+    await deleteCategory(id); ElMessage.success('已删除')
     queryClient.invalidateQueries({ queryKey: ['admin-categories'] })
     queryClient.invalidateQueries({ queryKey: ['categories'] })
-  } catch (err: any) {
-    if (err !== 'cancel') {
-      ElMessage.error(err.response?.data?.message || '删除失败')
-    }
-  }
+  } catch (err: any) { if (err !== 'cancel') ElMessage.error(err.response?.data?.message || '删除失败') }
 }
+
+const menuItems = [
+  { label: '管理概览', to: '/admin' },
+  { label: '图片管理', to: '/admin/images' },
+  { label: '分类管理', to: '/admin/categories' },
+]
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto px-4 py-8">
-    <div class="flex items-center justify-between mb-8">
-      <h1 class="text-2xl font-bold">分类管理</h1>
+  <ProfileLayout title="分类管理">
+    <template #menu>
+      <router-link
+        v-for="item in menuItems"
+        :key="item.to"
+        :to="item.to"
+        class="px-3 py-2 rounded-lg text-sm no-underline transition-colors"
+        :class="$route.path === item.to
+          ? 'bg-orange-50 text-orange-600 font-medium'
+          : 'text-gray-600 hover:bg-gray-50'"
+      >
+        {{ item.label }}
+      </router-link>
+    </template>
+
+    <div class="mb-4">
       <el-button type="primary" @click="openCreate">新增分类</el-button>
     </div>
 
-    <div v-if="isLoading" class="text-center py-20">
-      <p class="text-gray-400">加载中...</p>
-    </div>
+    <div v-if="isLoading" class="text-center py-20"><p class="text-gray-400">加载中...</p></div>
 
     <div v-else class="bg-white rounded-xl shadow-sm p-6">
       <el-table :data="categories" stripe>
         <el-table-column prop="name" label="名称" />
         <el-table-column prop="slug" label="Slug" />
         <el-table-column prop="description" label="描述" show-overflow-tooltip>
-          <template #default="{ row }">
-            {{ row.description || '-' }}
-          </template>
+          <template #default="{ row }">{{ row.description || '-' }}</template>
         </el-table-column>
         <el-table-column label="操作" width="180">
           <template #default="{ row }">
@@ -106,7 +103,6 @@ async function handleDelete(id: string, name: string) {
       </el-table>
     </div>
 
-    <!-- Dialog -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="500px">
       <el-form ref="formRef" :model="form" label-position="top">
         <el-form-item label="名称" prop="name" :rules="[{ required: true, message: '请输入分类名称' }]">
@@ -124,5 +120,5 @@ async function handleDelete(id: string, name: string) {
         <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
-  </div>
+  </ProfileLayout>
 </template>
