@@ -1,6 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 
+function stripHtml(input: string): string {
+  return input.replace(/<[^>]*>/g, '')
+}
+
 function parsePage(page?: number): number {
   const p = Number(page)
   return Number.isFinite(p) && p > 0 ? Math.floor(p) : 1
@@ -105,7 +109,7 @@ export class UsersService {
 
     return this.prisma.user.update({
       where: { id: userId },
-      data: { bio, bioStatus },
+      data: { bio: stripHtml(bio), bioStatus },
       select: {
         id: true,
         username: true,

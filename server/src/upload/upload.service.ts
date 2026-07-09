@@ -3,6 +3,11 @@ import * as sharp from 'sharp'
 import { PrismaService } from '../prisma/prisma.service'
 import { MinioService } from '../minio/minio.service'
 
+// 简易 HTML 标签去除
+function stripHtml(input: string): string {
+  return input.replace(/<[^>]*>/g, '')
+}
+
 @Injectable()
 export class UploadService {
   constructor(
@@ -21,13 +26,20 @@ export class UploadService {
     if (!file) {
       throw new BadRequestException('请选择要上传的图片')
     }
-
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
-    if (!allowedTypes.includes(file.mimetype)) {
-      throw new BadRequestException('仅支持 JPEG、PNG、WebP 格式')
-    }
     if (file.size > 10 * 1024 * 1024) {
       throw new BadRequestException('文件大小不能超过 10MB')
+    }
+
+    // 用 sharp metadata 验证真实文件类型（magic bytes），不信任 Content-Type
+    let metadata: sharp.Metadata
+    try {
+      metadata = await sharp(file.buffer, { limitInputPixels: 50_000_000 }).metadata()
+    } catch {
+      throw new BadRequestException('无法识别的图片格式')
+    }
+    const allowedFormats = ['jpeg', 'png', 'webp']
+    if (!metadata.format || !allowedFormats.includes(metadata.format)) {
+      throw new BadRequestException('仅支持 JPEG、PNG、WebP 格式')
     }
 
     // 检查用户当日上传数量（防滥用）
@@ -50,8 +62,10 @@ export class UploadService {
     let smBuffer: Buffer
     let mdBuffer: Buffer
     try {
-      smBuffer = await sharp(file.buffer).resize(300).jpeg({ quality: 80 }).toBuffer()
-      mdBuffer = await sharp(file.buffer).resize(800).jpeg({ quality: 85 }).toBuffer()
+      smBuffer = await sharp(file.buffer, { limitInputPixels: 50_000_000 })
+        .resize(300).jpeg({ quality: 80 }).toBuffer()
+      mdBuffer = await sharp(file.buffer, { limitInputPixels: 50_000_000 })
+        .resize(800).jpeg({ quality: 85 }).toBuffer()
     } catch {
       throw new BadRequestException('图片处理失败，请确认文件未损坏')
     }
@@ -73,8 +87,8 @@ export class UploadService {
 
     const image = await this.prisma.image.create({
       data: {
-        title,
-        description,
+        title: stripHtml(title),
+        description: description ? stripHtml(description) : null,
         url: `${baseUrl}/${rawName}`,
         thumbnailUrl: `${baseUrl}/${mdName}`,
         thumbnailSmUrl: `${baseUrl}/${smName}`,

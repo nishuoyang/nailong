@@ -52,8 +52,6 @@ export class AuthService {
     if (!stored || stored !== dto.captchaText.toLowerCase()) {
       throw new BadRequestException('验证码错误或已过期')
     }
-    // 验证成功后删除，防止重复使用
-    await this.redisService.client.del(`captcha:${dto.captchaSessionId}`)
 
     const existing = await this.prisma.user.findFirst({
       where: {
@@ -73,6 +71,9 @@ export class AuthService {
       },
     })
 
+    // 注册成功后删除验证码，防止重复使用
+    await this.redisService.client.del(`captcha:${dto.captchaSessionId}`)
+
     const tokens = await this.generateTokens(user.id, user.email, user.username, user.role)
     return {
       user: {
@@ -90,12 +91,10 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
     })
-    if (!user) {
-      throw new UnauthorizedException('邮箱或密码错误')
-    }
-
-    const valid = await bcrypt.compare(dto.password, user.passwordHash)
-    if (!valid) {
+    // 防时序枚举：无论用户是否存在都执行 bcrypt
+    const hash = user?.passwordHash || '$2b$12$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const valid = await bcrypt.compare(dto.password, hash)
+    if (!user || !valid) {
       throw new UnauthorizedException('邮箱或密码错误')
     }
 
@@ -121,7 +120,7 @@ export class AuthService {
       if (!user) {
         throw new UnauthorizedException('用户不存在')
       }
-      return this.generateTokens(user.id, user.email)
+      return this.generateTokens(user.id, user.email, user.username, user.role)
     } catch {
       throw new UnauthorizedException('refresh token 无效或已过期')
     }
