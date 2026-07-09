@@ -41,6 +41,12 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto) {
+    // 检查注册开关
+    const registrationOpen = await this.redisService.client.get('setting:registration')
+    if (registrationOpen === 'false') {
+      throw new BadRequestException('网站暂未开放注册')
+    }
+
     // 验证码校验
     const stored = await this.redisService.client.get(`captcha:${dto.captchaSessionId}`)
     if (!stored || stored !== dto.captchaText.toLowerCase()) {

@@ -18,6 +18,7 @@ const menuItems = [
   { label: '图片管理', to: '/admin/images' },
   { label: '用户管理', to: '/admin/users' },
   { label: '分类管理', to: '/admin/categories' },
+  { label: '设置', to: '/admin/settings' },
 ]
 </script>
 

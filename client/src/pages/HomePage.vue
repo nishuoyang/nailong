@@ -144,7 +144,7 @@ function handleSortChange(s: 'latest' | 'popular' | 'downloads') {
 
       <!-- Filters -->
       <div class="flex flex-wrap items-center justify-between gap-4 mb-8">
-        <div class="flex flex-wrap gap-2">
+        <div class="flex flex-wrap gap-1">
           <el-button :type="category === '' ? 'primary' : 'default'" size="small" @click="handleCategoryChange('')">
             全部
           </el-button>

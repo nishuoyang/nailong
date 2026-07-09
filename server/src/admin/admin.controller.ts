@@ -2,11 +2,15 @@ import { Controller, Get, Patch, Delete, Post, Put, Param, Body, Query } from '@
 import { RolesGuard } from '../common/guards/roles.guard'
 import { Roles } from '../common/decorators/roles.decorator'
 import { AdminService } from './admin.service'
+import { RedisService } from '../redis/redis.service'
 
 @Controller('admin')
 @Roles('admin')
 export class AdminController {
-  constructor(private adminService: AdminService) {}
+  constructor(
+    private adminService: AdminService,
+    private redisService: RedisService,
+  ) {}
 
   @Get('images')
   async getImages(
@@ -48,5 +52,19 @@ export class AdminController {
   @Delete('categories/:id')
   async deleteCategory(@Param('id') id: string) {
     return this.adminService.deleteCategory(id)
+  }
+
+  @Get('settings')
+  async getSettings() {
+    const registration = await this.redisService.client.get('setting:registration')
+    return { registrationOpen: registration !== 'false' }
+  }
+
+  @Patch('settings')
+  async updateSettings(@Body() body: { registrationOpen?: boolean }) {
+    if (body.registrationOpen !== undefined) {
+      await this.redisService.client.set('setting:registration', body.registrationOpen ? 'true' : 'false')
+    }
+    return await this.getSettings()
   }
 }
