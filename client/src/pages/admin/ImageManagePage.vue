@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
-import { getAdminImages, updateImageStatus, deleteImage } from '@/api/admin'
+import { getAdminImages, updateImageStatus, deleteImage, toggleFeatured } from '@/api/admin'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ProfileLayout from '@/components/layout/ProfileLayout.vue'
 
@@ -33,6 +33,12 @@ const deleteMutation = useMutation({
   mutationFn: (id: string) => deleteImage(id),
   onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin-images'] }); ElMessage.success('已删除') },
   onError: (err: any) => ElMessage.error(err.response?.data?.message || '删除失败'),
+})
+
+const featuredMutation = useMutation({
+  mutationFn: (id: string) => toggleFeatured(id),
+  onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin-images'] }); ElMessage.success('操作成功') },
+  onError: (err: any) => ElMessage.error(err.response?.data?.message || '操作失败'),
 })
 
 async function handleDelete(id: string, title: string) {
@@ -118,6 +124,15 @@ const menuItems = [
               <el-button v-if="row.status === 'offline'" type="success" size="small"
                 :loading="statusMutation.isPending.value"
                 @click="statusMutation.mutate({ id: row.id, status: 'approved' })">上架</el-button>
+              <el-button
+                :type="row.isFeatured ? 'warning' : 'info'"
+                size="small"
+                plain
+                :loading="featuredMutation.isPending.value"
+                @click="featuredMutation.mutate(row.id)"
+              >
+                {{ row.isFeatured ? '取消精选' : '精选' }}
+              </el-button>
               <el-button type="danger" size="small" plain
                 :loading="deleteMutation.isPending.value"
                 @click="handleDelete(row.id, row.title)">删除</el-button>

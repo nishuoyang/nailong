@@ -13,6 +13,10 @@ export function updateImageStatus(id: string, status: string) {
   return request.patch(`/admin/images/${id}/status`, { status })
 }
 
+export function toggleFeatured(id: string) {
+  return request.patch(`/admin/images/${id}/featured`)
+}
+
 export function deleteImage(id: string) {
   return request.delete(`/admin/images/${id}`)
 }

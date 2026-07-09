@@ -64,6 +64,16 @@ export class AdminService {
     })
   }
 
+  async toggleFeatured(id: string) {
+    const image = await this.prisma.image.findUnique({ where: { id } })
+    if (!image) throw new NotFoundException('图片不存在')
+    const updated = await this.prisma.image.update({
+      where: { id },
+      data: { isFeatured: !image.isFeatured },
+    })
+    return { isFeatured: updated.isFeatured }
+  }
+
   async deleteImage(id: string) {
     const image = await this.prisma.image.findUnique({ where: { id } })
     if (!image) throw new NotFoundException('图片不存在')

@@ -22,6 +22,11 @@ export class AdminController {
     return this.adminService.updateImageStatus(id, status)
   }
 
+  @Patch('images/:id/featured')
+  async toggleFeatured(@Param('id') id: string) {
+    return this.adminService.toggleFeatured(id)
+  }
+
   @Delete('images/:id')
   async deleteImage(@Param('id') id: string) {
     return this.adminService.deleteImage(id)

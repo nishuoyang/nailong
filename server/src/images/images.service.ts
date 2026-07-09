@@ -139,14 +139,14 @@ export class ImagesService {
     return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 } }
   }
 
-  // 精选推荐：仅管理员上传的 approved 图片
+  // 精选推荐：管理员手动标记的 isFeatured 图片
   async getFeatured(params: { page?: number; size?: number }) {
     const page = Number(params.page) || 1
     const size = Math.min(Number(params.size) || 20, 100)
 
     const where: Prisma.ImageWhereInput = {
       status: 'approved',
-      user: { role: 'admin' },
+      isFeatured: true,
     }
 
     const [raw, total] = await Promise.all([
