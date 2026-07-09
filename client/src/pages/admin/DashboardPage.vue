@@ -16,6 +16,7 @@ const { data: allData } = useQuery({
 const menuItems = [
   { label: '管理概览', to: '/admin' },
   { label: '图片管理', to: '/admin/images' },
+  { label: '用户管理', to: '/admin/users' },
   { label: '分类管理', to: '/admin/categories' },
 ]
 </script>

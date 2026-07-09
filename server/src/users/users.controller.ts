@@ -49,6 +49,25 @@ export class UsersController {
     return this.usersService.approveBio(id)
   }
 
+  // 管理员用户列表
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @Get()
+  async findAll(@Query('page') page?: number, @Query('size') size?: number) {
+    return this.usersService.findAll(page, size)
+  }
+
+  // 管理员编辑用户
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @Patch(':id')
+  async updateUser(
+    @Param('id') id: string,
+    @Body() body: { username?: string; email?: string; role?: string; bioStatus?: string },
+  ) {
+    return this.usersService.updateUser(id, body)
+  }
+
   @Public()
   @Get(':id/images')
   async getUserImages(
