@@ -12,6 +12,16 @@ function flattenCategories(image: any) {
   }
 }
 
+// 安全解析分页参数，防止 NaN 和负数
+function parsePage(page?: number): number {
+  const p = Number(page)
+  return Number.isFinite(p) && p > 0 ? Math.floor(p) : 1
+}
+function parseSize(size?: number): number {
+  const s = Number(size)
+  return Number.isFinite(s) && s > 0 ? Math.min(Math.floor(s), 100) : 20
+}
+
 @Injectable()
 export class ImagesService {
   constructor(
@@ -26,8 +36,8 @@ export class ImagesService {
     search?: string
     sort?: 'latest' | 'popular' | 'downloads'
   }) {
-    const page = Number(params.page) || 1
-    const size = Math.min(Number(params.size) || 20, 100)
+    const page = parsePage(params.page)
+    const size = parseSize(params.size)
     const { category, search, sort = 'latest' } = params
 
     const where: Prisma.ImageWhereInput = {
@@ -113,8 +123,8 @@ export class ImagesService {
 
   // 其他推荐：section='other' 的 approved 图片
   async getOther(params: { page?: number; size?: number }) {
-    const page = Number(params.page) || 1
-    const size = Math.min(Number(params.size) || 20, 100)
+    const page = parsePage(params.page)
+    const size = parseSize(params.size)
 
     const where: Prisma.ImageWhereInput = {
       status: 'approved',
@@ -141,8 +151,8 @@ export class ImagesService {
 
   // 精选推荐：管理员手动标记的 isFeatured 图片
   async getFeatured(params: { page?: number; size?: number }) {
-    const page = Number(params.page) || 1
-    const size = Math.min(Number(params.size) || 20, 100)
+    const page = parsePage(params.page)
+    const size = parseSize(params.size)
 
     const where: Prisma.ImageWhereInput = {
       status: 'approved',

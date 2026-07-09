@@ -11,7 +11,7 @@ const queryClient = useQueryClient()
 
 const imageId = route.params.id as string
 
-const { data: image, isLoading } = useQuery({
+const { data: image, isLoading, isError } = useQuery({
   queryKey: ['image', imageId],
   queryFn: () => getImageById(imageId).then((r) => r.data.data),
 })
@@ -69,6 +69,10 @@ function handleDownload() {
 <template>
   <div v-if="isLoading" class="text-center py-20">
     <p class="text-gray-400">加载中...</p>
+  </div>
+
+  <div v-else-if="isError" class="text-center py-20">
+    <p class="text-gray-400">加载失败，请刷新重试</p>
   </div>
 
   <div v-else-if="!image" class="text-center py-20">

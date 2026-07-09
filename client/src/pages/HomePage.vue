@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { getImages, getCategories, getLeaderboard, getDailyRecommendation } from '@/api/images'
@@ -16,12 +16,24 @@ const sort = ref<'latest' | 'popular' | 'downloads'>(
 )
 const searchInput = ref('')
 
+// 监听路由 query 变化（前进/后退）
+watch(
+  () => route.query,
+  (q) => {
+    category.value = (q.category as string) || ''
+    search.value = (q.search as string) || ''
+    sort.value = (q.sort as 'latest' | 'popular' | 'downloads') || 'latest'
+    searchInput.value = (q.search as string) || ''
+    page.value = 1
+  },
+)
+
 const { data: categories } = useQuery({
   queryKey: ['categories'],
   queryFn: () => getCategories().then((r) => r.data.data),
 })
 
-const { data: imageData, isLoading } = useQuery({
+const { data: imageData, isLoading, isError } = useQuery({
   queryKey: ['images', page, category, search, sort],
   queryFn: () =>
     getImages({ page: page.value, size: 20, category: category.value, search: search.value, sort: sort.value }).then(
@@ -174,6 +186,10 @@ function handleSortChange(s: 'latest' | 'popular' | 'downloads') {
       <!-- Image Grid -->
       <div v-if="isLoading" class="text-center py-20">
         <p class="text-gray-400">加载中...</p>
+      </div>
+
+      <div v-else-if="isError" class="text-center py-20">
+        <p class="text-gray-400">加载失败，请刷新重试</p>
       </div>
 
       <div v-else-if="!imageData?.data?.length" class="text-center py-20">

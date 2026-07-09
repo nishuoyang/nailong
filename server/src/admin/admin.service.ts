@@ -1,17 +1,28 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { MinioService } from '../minio/minio.service'
+import { RedisService } from '../redis/redis.service'
+
+function parsePage(page?: number): number {
+  const p = Number(page)
+  return Number.isFinite(p) && p > 0 ? Math.floor(p) : 1
+}
+function parseSize(size?: number): number {
+  const s = Number(size)
+  return Number.isFinite(s) && s > 0 ? Math.min(Math.floor(s), 100) : 20
+}
 
 @Injectable()
 export class AdminService {
   constructor(
     private prisma: PrismaService,
     private minioService: MinioService,
+    private redisService: RedisService,
   ) {}
 
   async findAllImages(params: { page?: number; size?: number; status?: string }) {
-    const page = Number(params.page) || 1
-    const size = Math.min(Number(params.size) || 20, 100)
+    const page = parsePage(params.page)
+    const size = parseSize(params.size)
     const { status } = params
 
     const where: any = {}
@@ -58,17 +69,22 @@ export class AdminService {
       )
     }
 
-    return this.prisma.image.update({
+    const updated = await this.prisma.image.update({
       where: { id },
       data: { status: status as any },
     })
+    // 状态变更时清除每日推荐缓存
+    await this.redisService.client.del('daily_recommendation')
+    return updated
   }
 
   async toggleFeatured(id: string) {
     const image = await this.prisma.image.findUnique({ where: { id } })
     if (!image) throw new NotFoundException('图片不存在')
+
+    // 用当前值作为条件执行原子切换，避免竞态
     const updated = await this.prisma.image.update({
-      where: { id },
+      where: { id, isFeatured: image.isFeatured },
       data: { isFeatured: !image.isFeatured },
     })
     return { isFeatured: updated.isFeatured }
@@ -94,6 +110,8 @@ export class AdminService {
     }
 
     await this.prisma.image.delete({ where: { id } })
+    // 删除时清除每日推荐缓存
+    await this.redisService.client.del('daily_recommendation')
     return { message: '删除成功' }
   }
 

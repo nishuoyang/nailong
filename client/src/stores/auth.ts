@@ -50,9 +50,11 @@ export const useAuthStore = defineStore('auth', () => {
       try {
         const res = await request.get('/users/me')
         user.value = res.data.data
-      } catch {
-        // token 过期，清除登录状态
-        logout()
+      } catch (err: any) {
+        // 仅在 401（token 过期）时登出，网络错误不处理
+        if (err?.response?.status === 401) {
+          logout()
+        }
       } finally {
         restorePromise = null
       }

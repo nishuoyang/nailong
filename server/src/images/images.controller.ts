@@ -38,7 +38,7 @@ export class ImagesController {
   @Get('images/:id/file')
   async getFile(@Param('id') id: string, @Res() res: Response) {
     const image = await this.imagesService.findByIdRaw(id)
-    if (!image) throw new NotFoundException('图片不存在')
+    if (!image || image.status !== 'approved') throw new NotFoundException('图片不存在')
 
     const url = image.url
     const filename = url.split('/').pop() || 'image'

@@ -73,7 +73,7 @@ export class AuthService {
       },
     })
 
-    const tokens = await this.generateTokens(user.id, user.email)
+    const tokens = await this.generateTokens(user.id, user.email, user.username, user.role)
     return {
       user: {
         id: user.id,
@@ -99,7 +99,7 @@ export class AuthService {
       throw new UnauthorizedException('邮箱或密码错误')
     }
 
-    const tokens = await this.generateTokens(user.id, user.email)
+    const tokens = await this.generateTokens(user.id, user.email, user.username, user.role)
     return {
       user: {
         id: user.id,
@@ -127,8 +127,8 @@ export class AuthService {
     }
   }
 
-  private async generateTokens(userId: string, email: string) {
-    const payload = { sub: userId, email }
+  private async generateTokens(userId: string, email: string, username?: string, role?: string) {
+    const payload = { sub: userId, email, username, role }
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {

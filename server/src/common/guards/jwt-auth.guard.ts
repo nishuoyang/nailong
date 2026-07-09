@@ -30,6 +30,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
           request.user = {
             id: payload.sub,
             email: payload.email,
+            username: payload.username,
+            role: payload.role,
           }
         } catch {
           // token 无效 — 公开端点允许通过

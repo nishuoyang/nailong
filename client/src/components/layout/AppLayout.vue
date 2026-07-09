@@ -6,13 +6,11 @@ import { useRouter } from 'vue-router'
 const authStore = useAuthStore()
 const router = useRouter()
 
-// 主题模式
-const isDark = ref(false)
+// 主题模式 — 从 localStorage 读取初始值避免闪烁
+const isDark = ref(localStorage.getItem('theme') === 'dark')
 const showThemePopover = ref(false)
 
 onMounted(() => {
-  const saved = localStorage.getItem('theme')
-  isDark.value = saved === 'dark'
   applyTheme()
 })
 

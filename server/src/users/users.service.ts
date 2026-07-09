@@ -1,13 +1,22 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 
+function parsePage(page?: number): number {
+  const p = Number(page)
+  return Number.isFinite(p) && p > 0 ? Math.floor(p) : 1
+}
+function parseSize(size?: number): number {
+  const s = Number(size)
+  return Number.isFinite(s) && s > 0 ? Math.min(Math.floor(s), 100) : 20
+}
+
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(page = 1, size = 20) {
-    const pageNum = Number(page) || 1
-    const sizeNum = Math.min(Number(size) || 20, 100)
+    const pageNum = parsePage(page)
+    const sizeNum = parseSize(size)
     const [data, total] = await Promise.all([
       this.prisma.user.findMany({
         select: {
@@ -26,19 +35,26 @@ export class UsersService {
   async updateUser(id: string, data: { username?: string; email?: string; role?: string; bioStatus?: string }) {
     const user = await this.prisma.user.findUnique({ where: { id } })
     if (!user) throw new NotFoundException('用户不存在')
-    return this.prisma.user.update({
-      where: { id },
-      data: {
-        ...(data.username !== undefined && { username: data.username }),
-        ...(data.email !== undefined && { email: data.email }),
-        ...(data.role !== undefined && { role: data.role as any }),
-        ...(data.bioStatus !== undefined && { bioStatus: data.bioStatus as any }),
-      },
-      select: {
+    try {
+      return await this.prisma.user.update({
+        where: { id },
+        data: {
+          ...(data.username !== undefined && { username: data.username }),
+          ...(data.email !== undefined && { email: data.email }),
+          ...(data.role !== undefined && { role: data.role as any }),
+          ...(data.bioStatus !== undefined && { bioStatus: data.bioStatus as any }),
+        },
+        select: {
         id: true, username: true, email: true, role: true,
         avatarUrl: true, bio: true, bioStatus: true, createdAt: true,
       },
     })
+    } catch (err: any) {
+      if (err?.code === 'P2002') {
+        throw new NotFoundException('邮箱或用户名已被使用')
+      }
+      throw err
+    }
   }
 
   async findById(id: string) {
@@ -100,8 +116,8 @@ export class UsersService {
   }
 
   async getUserImages(userId: string, page = 1, size = 20) {
-    const pageNum = Number(page) || 1
-    const sizeNum = Math.min(Number(size) || 20, 100)
+    const pageNum = parsePage(page)
+    const sizeNum = parseSize(size)
 
     const [data, total] = await Promise.all([
       this.prisma.image.findMany({
@@ -130,6 +146,8 @@ export class UsersService {
   }
 
   async getMyImages(userId: string, page = 1, size = 20) {
+    const pageNum = parsePage(page)
+    const sizeNum = parseSize(size)
     const [data, total] = await Promise.all([
       this.prisma.image.findMany({
         where: { userId },
@@ -138,11 +156,11 @@ export class UsersService {
           user: { select: { id: true, username: true, avatarUrl: true } },
         },
         orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * size,
-        take: size,
+        skip: (pageNum - 1) * sizeNum,
+        take: sizeNum,
       }),
       this.prisma.image.count({ where: { userId } }),
     ])
-    return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) } }
+    return { data, meta: { page: pageNum, size: sizeNum, total, totalPages: Math.ceil(total / sizeNum) || 1 } }
   }
 }
