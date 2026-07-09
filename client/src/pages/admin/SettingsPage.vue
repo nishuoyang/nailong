@@ -49,13 +49,13 @@ const menuItems = [
     <div v-else class="bg-white rounded-xl shadow-sm p-6">
       <div class="flex items-center justify-between py-4">
         <div>
-          <h3 class="font-medium text-gray-800">开放注册</h3>
-          <p class="text-sm text-gray-400 mt-1">关闭后，新用户无法注册账号</p>
+          <h3 class="font-medium text-gray-800">关闭注册</h3>
+          <p class="text-sm text-gray-400 mt-1">开启后，新用户无法注册账号</p>
         </div>
         <el-switch
-          :model-value="settings?.registrationOpen !== false"
+          :model-value="settings?.registrationOpen === false"
           :loading="mutation.isPending.value"
-          @change="(val: boolean) => mutation.mutate({ registrationOpen: val })"
+          @change="(val: boolean) => mutation.mutate({ registrationOpen: !val })"
         />
       </div>
     </div>
