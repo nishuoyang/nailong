@@ -1,125 +1,107 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
 # Nai Long（奶龙）图片展示平台
-1
+
 ## 项目概述
 
 图片展示社区平台，功能包括：
-- 图片浏览（瀑布流列表、详情、搜索、分类筛选）
-- 用户注册/登录（JWT 认证）
-- 用户上传图片（管理员审核后公开可见）
-- 点赞/下载互动（显示计数）
-- 后台管理（审核、上下架、删除、分类管理）
+- 图片浏览（瀑布流列表、详情、搜索、分类筛选、三栏布局）
+- 精选推荐（管理员手动标记）/ 其他推荐（独立 section，管理员上传）/ 每周排行榜 / 每日推荐
+- 用户注册/登录（JWT + 验证码），个人主页（bio 可编辑，需审核）
+- 用户上传图片（sharp 生成缩略图，管理员审核后公开可见）
+- 点赞/下载互动（显示计数，下载通过服务端代理）
+- 后台管理（审核、上下架、删除、精选标记、分类管理、用户管理、设置）
+- 暗色/白天模式切换
 
 ## 技术栈
 
 | 层 | 选型 |
 |---|---|
 | 前端 | Vue 3 + TypeScript + Vite |
-| UI | Tailwind CSS + Element Plus |
+| UI | Tailwind CSS v4 + Element Plus |
 | 路由 | Vue Router 4 |
 | 数据请求 | @tanstack/vue-query |
 | 状态管理 | Pinia |
 | 后端 | NestJS + TypeScript |
-| ORM | Prisma + PostgreSQL 16 |
+| ORM | Prisma + SQLite（文件数据库，零配置） |
 | 缓存 | Redis 7 |
 | 文件存储 | MinIO（开发）→ 阿里云 OSS/腾讯云 COS（生产） |
 | 认证 | JWT Access + Refresh Token |
+
+## 常用命令
+
+```bash
+# 开发环境
+cd server && npm run start:dev    # 后端 :3000
+cd client && npm run dev          # 前端 :5173
+
+# 数据库
+cd server
+npx prisma migrate dev --name xxx # 创建 migration
+npx prisma generate               # 重新生成 Prisma client
+npx prisma studio                 # 数据库可视化
+
+# 构建
+cd server && npm run build
+cd client && npm run build
+
+# Docker（Redis + MinIO，不含数据库）
+docker compose up -d
+```
+
+## 关键设计约定
+
+1. **API 响应格式**：统一 `{code: 0, message: "ok", data: ..., meta?: {...}}`，分页时 meta 在顶层
+2. **数据库**：SQLite 文件 `server/prisma/data.db`，无需 Docker 容器。Schema 中的 `status`/`section`/`role` 等全是 `String` 类型（非 enum，因为 SQLite 不支持）
+3. **图片状态机**：`pending → approved/rejected`；`approved → offline`（下架）；`offline → approved`（重新上架）
+4. **点赞 toggle**：同一接口，INSERT 或 DELETE + 事务内更新 `likeCount`，直接解构事务返回值
+5. **上传限制**：仅 jpeg/png/webp，≤10MB，每用户每日 ≤50 张
+6. **路由守卫**：meta.requiresAuth（需登录）、meta.requiresAdmin（需管理员角色）
+7. **存储透明**：Prisma 只存 URL 字符串，切换 MinIO/OSS/COS 不改 schema
+8. **JWT 公开端点**：`@Public()` 端点手动解析 JWT（不通过 Passport），有 token 则设 `request.user`，无则放行
+9. **图片 section**：`general`（发现页）/ `other`（其他推荐页），发现页只查 `section=general`
+10. **首页布局**：三栏 `xl:block`，左右侧栏在 <1280px 时同时隐藏
+11. **验证码**：`svg-captcha` 生成，答案存 Redis，5 分钟过期不区分大小写
+12. **每日推荐**：随机选 approved 图片，Redis 缓存到次日凌晨 4 点
+13. **暗色模式**：`localStorage('theme')`，`<html class="dark">` + Tailwind `dark:` variant，右下角 ⚙️ 浮动按钮
 
 ## 项目结构
 
 ```
 nailong/
-├── client/                    # Vue 3 前端
-│   └── src/
-│       ├── api/               # 按模块拆分的 API 请求
-│       ├── components/        # 通用组件 + 布局 + 后台组件
-│       ├── composables/       # 组合式函数（useAuth, useImages, useLike, useUpload）
-│       ├── pages/             # 页面组件 + admin/ 子目录
-│       ├── router/            # 路由配置 + 导航守卫
-│       └── stores/            # Pinia stores（auth, ui）
-├── server/                    # NestJS 后端
-│   └── src/
-│       ├── auth/              # 认证模块（JWT strategy + guards）
-│       ├── users/             # 用户模块
-│       ├── images/            # 公开图片接口
-│       ├── upload/            # 上传 + MinIO + sharp 缩略图
-│       ├── likes/             # 点赞 toggle
-│       ├── admin/             # 后台管理
-│       ├── common/            # 公共 guards/decorators/filters/interceptors
-│       ├── prisma/            # PrismaModule + PrismaService
-│       └── redis/             # RedisModule
-├── docker-compose.yml         # PostgreSQL + Redis + MinIO
-└── plan.md                    # 架构设计方案（详见 .claude/plans/nai-long-mellow-quasar.md）
+├── client/src/
+│   ├── api/               # auth.ts, images.ts, upload.ts, admin.ts
+│   ├── components/
+│   │   ├── common/        # ImageCard, SearchBar, Pagination
+│   │   └── layout/        # AppLayout, ProfileLayout
+│   ├── pages/
+│   │   ├── HomePage, ImageDetailPage, SearchPage
+│   │   ├── LoginPage, RegisterPage, ProfilePage, UploadPage
+│   │   ├── FeaturedPage, OtherPage, UserProfilePage
+│   │   └── admin/         # Dashboard, ImageManage, UserManage, CategoryManage, Settings
+│   ├── router/            # 路由配置 + beforeEach 守卫（含 restoreUser）
+│   ├── stores/            # auth.ts（含 restoreUser）
+│   └── utils/             # request.ts（axios 实例 + 401 自动刷新 token）
+├── server/src/
+│   ├── auth/              # 认证（register/login/refresh/captcha，JWT strategy + guard）
+│   ├── users/             # 用户 CRUD + bio + 公开主页
+│   ├── images/            # 公开接口（列表/详情/搜索/featured/other/daily/leaderboard/文件代理）
+│   ├── upload/            # 上传 + MinIO + sharp 缩略图（300px/800px）
+│   ├── likes/             # 点赞 toggle + 下载计数
+│   ├── admin/             # 审核/上下架/删除/精选/分类管理/设置
+│   ├── common/            # guards/decorators/filters/interceptors
+│   ├── prisma/            # PrismaModule + PrismaService
+│   ├── redis/             # RedisModule + RedisService
+│   └── minio/             # 共享 MinioModule（@Global），ensureBucket + 公开读策略
+└── docker-compose.yml     # Redis + MinIO（无 PostgreSQL）
 ```
-
-## 关键设计约定
-
-1. **API 响应格式**：统一 `{code: 0, message: "ok", data: ..., meta?: {...}}`
-2. **分页参数**：`?page=1&size=20`，meta 返回 total、totalPages
-3. **图片状态机**：`pending → approved/rejected`；`approved → offline`（下架）
-4. **点赞 toggle**：同一接口，INSERT 或 DELETE + 更新冗余计数
-5. **计数冗余**：`like_count`、`download_count` 冗余在 images 表，service 层保证一致性
-6. **上传限制**：仅 jpeg/png/webp，≤10MB，每用户每日 ≤50 张
-7. **路由守卫**：meta.requiresAuth（需登录）、meta.requiresAdmin（需管理员角色）
-8. **存储透明**：Prisma 只存 URL 字符串，切换 MinIO/OSS/COS 不改 schema
 
 ## 图片尺寸规格
 
 - `_thumb_sm`：300px 宽（列表卡片）
 - `_thumb_md`：800px 宽（详情预览）
 - 原图：保留原始分辨率
-
-## 开发顺序（按 Phase 推进）
-
-1. 脚手架（Vite + NestJS + Docker 环境 + Prisma 建表）
-2. 认证系统（注册/登录/JWT Guard/前端登录页）
-3. 图片浏览（种子数据 + 列表 API + 首页瀑布流 + 详情页）
-4. 上传 + 审核（MinIO + sharp + upload 模块 + 审核流程）
-5. 互动（点赞 toggle + 下载计数）
-6. 后台管理（审核/上下架/删除 + 分类管理）
-7. 完善 + 部署（限流、搜索优化、Nginx、PM2）
-
----
-
-<!-- superpowers-zh:begin (do not edit between these markers) -->
-# Superpowers-ZH 中文增强版
-
-本项目已安装 superpowers-zh 技能框架（20 个 skills）。
-
-## 核心规则
-
-1. **收到任务时，先检查是否有匹配的 skill** — 哪怕只有 1% 的可能性也要检查
-2. **设计先于编码** — 收到功能需求时，先用 brainstorming skill 做需求分析
-3. **测试先于实现** — 写代码前先写测试（TDD）
-4. **验证先于完成** — 声称完成前必须运行验证命令
-
-## 可用 Skills
-
-Skills 位于 `.claude/skills/` 目录，每个 skill 有独立的 `SKILL.md` 文件。
-
-- **brainstorming**: 在任何创造性工作之前必须使用此技能——创建功能、构建组件、添加功能或修改行为。在实现之前先探索用户意图、需求和设计。
-- **chinese-code-review**: 中文 review 沟通参考——话术模板、分级标注（必须修复/建议修改/仅供参考）、国内团队常见反模式应对。仅在用户显式 /chinese-code-review 时调用，不要根据上下文自动触发。
-- **chinese-commit-conventions**: 中文 commit 与 changelog 配置参考——Conventional Commits 中文适配、commitlint/husky/commitizen 中文模板、conventional-changelog 中文配置。仅在用户显式 /chinese-commit-conventions 时调用，不要根据上下文自动触发。
-- **chinese-documentation**: 中文文档排版参考——中英文空格、全半角标点、术语保留、链接格式、中文文案排版指北约定。仅在用户显式 /chinese-documentation 时调用，不要根据上下文自动触发。
-- **chinese-git-workflow**: 国内 Git 平台配置参考——Gitee、Coding.net、极狐 GitLab、CNB 的 SSH/HTTPS/凭据/CI 接入差异与镜像同步配置。仅在用户显式 /chinese-git-workflow 时调用，不要根据上下文自动触发。
-- **dispatching-parallel-agents**: 当面对 2 个以上可以独立进行、无共享状态或顺序依赖的任务时使用
-- **executing-plans**: 当你有一份书面实现计划需要在单独的会话中执行，并设有审查检查点时使用
-- **finishing-a-development-branch**: 当实现完成、所有测试通过、需要决定如何集成工作时使用——通过提供合并、PR 或清理等结构化选项来引导开发工作的收尾
-- **mcp-builder**: MCP 服务器构建方法论 — 系统化构建生产级 MCP 工具，让 AI 助手连接外部能力
-- **receiving-code-review**: 收到代码审查反馈后、实施建议之前使用，尤其当反馈不明确或技术上有疑问时——需要技术严谨性和验证，而非敷衍附和或盲目执行
-- **requesting-code-review**: 完成任务、实现重要功能或合并前使用，用于验证工作成果是否符合要求
-- **subagent-driven-development**: 当在当前会话中执行包含独立任务的实现计划时使用
-- **systematic-debugging**: 遇到任何 bug、测试失败或异常行为时使用，在提出修复方案之前执行
-- **test-driven-development**: 在实现任何功能或修复 bug 时使用，在编写实现代码之前
-- **using-git-worktrees**: 当需要开始与当前工作区隔离的功能开发，或在执行实现计划之前使用——通过原生工具或 git worktree 回退机制确保隔离工作区存在
-- **using-superpowers**: 在开始任何对话时使用——确立如何查找和使用技能，要求在任何响应（包括澄清性问题）之前调用 Skill 工具
-- **verification-before-completion**: 在宣称工作完成、已修复或测试通过之前使用，在提交或创建 PR 之前——必须运行验证命令并确认输出后才能声称成功；始终用证据支撑断言
-- **workflow-runner**: 在 Claude Code / OpenClaw / Cursor 中直接运行 agency-orchestrator YAML 工作流——无需 API key，使用当前会话的 LLM 作为执行引擎。当用户提供 .yaml 工作流文件或要求多角色协作完成任务时触发。
-- **writing-plans**: 当你有规格说明或需求用于多步骤任务时使用，在动手写代码之前
-- **writing-skills**: 当创建新技能、编辑现有技能或在部署前验证技能是否有效时使用
-
-## 如何使用
-
-当任务匹配某个 skill 时，使用 `Skill` 工具加载对应 skill 并严格遵循其流程。绝不要用 Read 工具读取 SKILL.md 文件。
-
-如果你认为哪怕只有 1% 的可能性某个 skill 适用于你正在做的事情，你必须调用该 skill 检查。
-<!-- superpowers-zh:end -->
