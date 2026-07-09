@@ -13,7 +13,7 @@ defineProps<{
     <div class="flex gap-8">
       <!-- Sidebar -->
       <aside class="w-56 shrink-0">
-        <div class="bg-white rounded-xl shadow-sm p-6 sticky top-20">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 sticky top-20">
           <!-- User info -->
           <div class="text-center mb-6 pb-6 border-b border-gray-100">
             <div class="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center text-2xl mx-auto mb-2">

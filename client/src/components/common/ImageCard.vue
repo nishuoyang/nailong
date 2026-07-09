@@ -7,7 +7,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="block rounded-lg overflow-hidden bg-white shadow-sm hover:shadow-md transition-shadow">
+  <div class="block rounded-lg overflow-hidden bg-white dark:bg-gray-800 shadow-sm hover:shadow-md transition-shadow">
     <router-link :to="`/images/${image.id}`" class="no-underline">
       <div class="aspect-[4/3] overflow-hidden bg-gray-100">
         <img
