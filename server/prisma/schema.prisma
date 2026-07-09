@@ -3,121 +3,90 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-enum UserRole {
-  user
-  admin
-}
-
-enum ImageStatus {
-  pending
-  approved
-  rejected
-  offline
-}
-
-enum BioStatus {
-  approved
-  pending
-}
-
-enum ImageSection {
-  general
-  other
+  provider = "sqlite"
+  url      = "file:./data.db"
 }
 
 model User {
-  id           String     @id @default(uuid()) @db.Uuid
-  username     String     @unique @db.VarChar(32)
-  email        String     @unique @db.VarChar(255)
-  passwordHash String     @map("password_hash") @db.VarChar(255)
-  role         UserRole   @default(user)
-  avatarUrl    String?    @map("avatar_url") @db.VarChar(512)
-  bio          String?    @db.Text
-  bioStatus    BioStatus? @default(approved) @map("bio_status")
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
+  id           String   @id @default(uuid())
+  username     String   @unique
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         String   @default("user")
+  avatarUrl    String?  @map("avatar_url")
+  bio          String?
+  bioStatus    String?  @default("approved") @map("bio_status")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   images    Image[]
   likes     Like[]
   downloads Download[]
-
-  @@map("users")
 }
 
 model Category {
-  id          String   @id @default(uuid()) @db.Uuid
-  name        String   @unique @db.VarChar(64)
-  slug        String   @unique @db.VarChar(64)
-  description String?  @db.Text
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
   createdAt   DateTime @default(now()) @map("created_at")
 
   images ImagesOnCategories[]
-
-  @@map("categories")
 }
 
 model Image {
-  id            String      @id @default(uuid()) @db.Uuid
-  title         String      @db.VarChar(255)
-  description   String?     @db.Text
-  url            String      @db.VarChar(1024)
-  thumbnailUrl   String?     @map("thumbnail_url") @db.VarChar(1024)
-  thumbnailSmUrl String?     @map("thumbnail_sm_url") @db.VarChar(1024)
-  userId        String      @map("user_id") @db.Uuid
-  status        ImageStatus  @default(pending)
-  section       ImageSection @default(general)
-  isFeatured    Boolean      @default(false) @map("is_featured")
-  likeCount     Int          @default(0) @map("like_count")
-  downloadCount Int         @default(0) @map("download_count")
-  viewCount     Int         @default(0) @map("view_count")
-  createdAt     DateTime    @default(now()) @map("created_at")
-  updatedAt     DateTime    @updatedAt @map("updated_at")
+  id             String   @id @default(uuid())
+  title          String
+  description    String?
+  url            String
+  thumbnailUrl   String?  @map("thumbnail_url")
+  thumbnailSmUrl String?  @map("thumbnail_sm_url")
+  userId         String   @map("user_id")
+  status         String   @default("pending")
+  section        String   @default("general")
+  isFeatured     Boolean  @default(false) @map("is_featured")
+  likeCount      Int      @default(0) @map("like_count")
+  downloadCount  Int      @default(0) @map("download_count")
+  viewCount      Int      @default(0) @map("view_count")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   user       User                  @relation(fields: [userId], references: [id])
   categories ImagesOnCategories[]
   likes      Like[]
   downloads  Download[]
 
-  @@index([status, createdAt(sort: Desc)])
-  @@map("images")
+  @@index([status, createdAt])
 }
 
 model ImagesOnCategories {
-  imageId    String @map("image_id") @db.Uuid
-  categoryId String @map("category_id") @db.Uuid
+  imageId    String
+  categoryId String
 
   image    Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
   category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@id([imageId, categoryId])
-  @@map("images_categories")
 }
 
 model Like {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  imageId   String   @map("image_id") @db.Uuid
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  imageId   String   @map("image_id")
   createdAt DateTime @default(now()) @map("created_at")
 
   user  User  @relation(fields: [userId], references: [id])
   image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
 
   @@unique([userId, imageId])
-  @@map("likes")
 }
 
 model Download {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  imageId   String   @map("image_id") @db.Uuid
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  imageId   String   @map("image_id")
   createdAt DateTime @default(now()) @map("created_at")
 
   user  User  @relation(fields: [userId], references: [id])
   image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
-
-  @@map("downloads")
 }

@@ -11,6 +11,8 @@ dist/
 
 # prisma
 prisma/*.db
+*.db
+*.db-journal
 
 # logs
 npm-debug.log*

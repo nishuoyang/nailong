@@ -1,19 +1,6 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: nailong-postgres
-    environment:
-      POSTGRES_USER: nailong
-      POSTGRES_PASSWORD: nailong123
-      POSTGRES_DB: nailong
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    restart: unless-stopped
-
   redis:
     image: redis:7-alpine
     container_name: nailong-redis
@@ -38,6 +25,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
   redisdata:
   miniodata:
