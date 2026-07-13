@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM docker.io/library/node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -6,7 +6,7 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 
-FROM node:22-alpine
+FROM node:20-alpine
 WORKDIR /app
 
 # Prisma 引擎依赖 OpenSSL 库
