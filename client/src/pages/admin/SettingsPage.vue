@@ -12,7 +12,7 @@ const { data: settings, isLoading } = useQuery({
 })
 
 const mutation = useMutation({
-  mutationFn: (data: { registrationOpen: boolean }) =>
+  mutationFn: (data: { registrationOpen?: boolean; loginRestricted?: boolean }) =>
     request.patch('/admin/settings', data),
   onSuccess: () => {
     queryClient.invalidateQueries({ queryKey: ['admin-settings'] })
@@ -47,8 +47,8 @@ const menuItems = [
 
     <div v-if="isLoading" class="text-center py-20"><p class="text-gray-400">加载中...</p></div>
 
-    <div v-else class="bg-white rounded-xl shadow-sm p-6">
-      <div class="flex items-center justify-between py-4">
+    <div v-else class="bg-white rounded-xl shadow-sm p-6 space-y-2">
+      <div class="flex items-center justify-between py-4 border-b border-gray-100">
         <div>
           <h3 class="font-medium text-gray-800">关闭注册</h3>
           <p class="text-sm text-gray-400 mt-1">开启后，新用户无法注册账号</p>
@@ -57,6 +57,17 @@ const menuItems = [
           :model-value="settings?.registrationOpen === false"
           :loading="mutation.isPending.value"
           @change="(val: boolean) => mutation.mutate({ registrationOpen: !val })"
+        />
+      </div>
+      <div class="flex items-center justify-between py-4">
+        <div>
+          <h3 class="font-medium text-gray-800">限制登录</h3>
+          <p class="text-sm text-gray-400 mt-1">开启后，仅管理员账号可以登录</p>
+        </div>
+        <el-switch
+          :model-value="settings?.loginRestricted === true"
+          :loading="mutation.isPending.value"
+          @change="(val: boolean) => mutation.mutate({ loginRestricted: val })"
         />
       </div>
     </div>

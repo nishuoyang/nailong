@@ -56,14 +56,23 @@ export class AdminController {
 
   @Get('settings')
   async getSettings() {
-    const registration = await this.redisService.client.get('setting:registration')
-    return { registrationOpen: registration !== 'false' }
+    const [registration, loginRestricted] = await Promise.all([
+      this.redisService.client.get('setting:registration'),
+      this.redisService.client.get('setting:login_restricted'),
+    ])
+    return {
+      registrationOpen: registration !== 'false',
+      loginRestricted: loginRestricted === 'true',
+    }
   }
 
   @Patch('settings')
-  async updateSettings(@Body() body: { registrationOpen?: boolean }) {
+  async updateSettings(@Body() body: { registrationOpen?: boolean; loginRestricted?: boolean }) {
     if (body.registrationOpen !== undefined) {
       await this.redisService.client.set('setting:registration', body.registrationOpen ? 'true' : 'false')
+    }
+    if (body.loginRestricted !== undefined) {
+      await this.redisService.client.set('setting:login_restricted', body.loginRestricted ? 'true' : 'false')
     }
     return await this.getSettings()
   }

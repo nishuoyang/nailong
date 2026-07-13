@@ -98,6 +98,12 @@ export class AuthService {
       throw new UnauthorizedException('邮箱或密码错误')
     }
 
+    // 登录限制：开启后仅管理员可登录
+    const loginRestricted = await this.redisService.client.get('setting:login_restricted')
+    if (loginRestricted === 'true' && user.role !== 'admin') {
+      throw new UnauthorizedException('网站暂未开放登录')
+    }
+
     const tokens = await this.generateTokens(user.id, user.email, user.username, user.role)
     return {
       user: {
