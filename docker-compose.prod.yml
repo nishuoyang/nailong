@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: nailong-server
+    restart: unless-stopped
+    volumes:
+      - sqlite_data:/app/data
+      - ./server/.env:/app/.env:ro
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:/app/data/data.db
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: nailong-client
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+
+  redis:
+    image: redis:7-alpine
+    container_name: nailong-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: nailong-minio
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+
+volumes:
+  sqlite_data:
+  redis_data:
+  minio_data:
