@@ -18,11 +18,14 @@ function parseSize(size?: number): number {
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(page = 1, size = 20) {
+  async findAll(page = 1, size = 20, bioStatus?: string) {
     const pageNum = parsePage(page)
     const sizeNum = parseSize(size)
+    const where: any = {}
+    if (bioStatus) where.bioStatus = bioStatus
     const [data, total] = await Promise.all([
       this.prisma.user.findMany({
+        where,
         select: {
           id: true, username: true, email: true, role: true,
           avatarUrl: true, bio: true, bioStatus: true, createdAt: true,
@@ -31,12 +34,12 @@ export class UsersService {
         skip: (pageNum - 1) * sizeNum,
         take: sizeNum,
       }),
-      this.prisma.user.count(),
+      this.prisma.user.count({ where }),
     ])
     return { data, meta: { page: pageNum, size: sizeNum, total, totalPages: Math.ceil(total / sizeNum) || 1 } }
   }
 
-  async updateUser(id: string, data: { username?: string; email?: string; role?: string; bioStatus?: string }) {
+  async updateUser(id: string, data: { username?: string; email?: string; role?: string; bioStatus?: string; bio?: string }) {
     const user = await this.prisma.user.findUnique({ where: { id } })
     if (!user) throw new NotFoundException('用户不存在')
     try {
@@ -47,6 +50,7 @@ export class UsersService {
           ...(data.email !== undefined && { email: data.email }),
           ...(data.role !== undefined && { role: data.role as any }),
           ...(data.bioStatus !== undefined && { bioStatus: data.bioStatus as any }),
+          ...(data.bio !== undefined && { bio: data.bio }),
         },
         select: {
         id: true, username: true, email: true, role: true,

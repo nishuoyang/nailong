@@ -62,6 +62,7 @@ const menuItems = [
   { label: '管理概览', to: '/admin' },
   { label: '图片管理', to: '/admin/images' },
   { label: '用户管理', to: '/admin/users' },
+  { label: 'Bio 审核', to: '/admin/bio-review' },
   { label: '分类管理', to: '/admin/categories' },
   { label: '设置', to: '/admin/settings' },
 ]

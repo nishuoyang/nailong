@@ -53,8 +53,12 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('admin')
   @Get()
-  async findAll(@Query('page') page?: number, @Query('size') size?: number) {
-    return this.usersService.findAll(page, size)
+  async findAll(
+    @Query('page') page?: number,
+    @Query('size') size?: number,
+    @Query('bioStatus') bioStatus?: string,
+  ) {
+    return this.usersService.findAll(page, size, bioStatus)
   }
 
   // 管理员编辑用户
@@ -63,7 +67,7 @@ export class UsersController {
   @Patch(':id')
   async updateUser(
     @Param('id') id: string,
-    @Body() body: { username?: string; email?: string; role?: string; bioStatus?: string },
+    @Body() body: { username?: string; email?: string; role?: string; bioStatus?: string; bio?: string },
   ) {
     return this.usersService.updateUser(id, body)
   }

@@ -71,6 +71,12 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresAdmin: true },
     },
     {
+      path: '/admin/bio-review',
+      name: 'admin-bio-review',
+      component: () => import('@/pages/admin/BioReviewPage.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
       path: '/admin/users',
       name: 'admin-users',
       component: () => import('@/pages/admin/UserManagePage.vue'),
