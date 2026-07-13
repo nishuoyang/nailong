@@ -27,7 +27,7 @@ const approveMutation = useMutation({
 })
 
 const rejectMutation = useMutation({
-  mutationFn: (id: string) => request.patch(`/users/${id}`, { bioStatus: 'approved', bio: '' }),
+  mutationFn: (id: string) => request.patch(`/users/${id}`, { bioStatus: 'approved' }),
   onSuccess: () => {
     queryClient.invalidateQueries({ queryKey: ['admin-pending-bios'] })
     ElMessage.success('已拒绝')

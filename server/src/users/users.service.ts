@@ -50,7 +50,7 @@ export class UsersService {
           ...(data.email !== undefined && { email: data.email }),
           ...(data.role !== undefined && { role: data.role as any }),
           ...(data.bioStatus !== undefined && { bioStatus: data.bioStatus as any }),
-          ...(data.bio !== undefined && { bio: data.bio }),
+          ...(data.bio !== undefined && { bio: data.bio || null }),
         },
         select: {
         id: true, username: true, email: true, role: true,
@@ -145,7 +145,7 @@ export class UsersService {
 
   async approveBio(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (!user || !user.bio) throw new NotFoundException('用户或 bio 不存在')
+    if (!user || user.bio == null) throw new NotFoundException('用户或 bio 不存在')
 
     return this.prisma.user.update({
       where: { id: userId },
