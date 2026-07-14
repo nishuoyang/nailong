@@ -9,6 +9,16 @@ const router = useRouter()
 // 主题模式 — 从 localStorage 读取初始值避免闪烁
 const isDark = ref(localStorage.getItem('theme') === 'dark')
 const showThemePopover = ref(false)
+const showFeedback = ref(false)
+const feedback = ref({ subject: '', message: '' })
+
+function submitFeedback() {
+  const subject = encodeURIComponent(`[奶龙反馈] ${feedback.value.subject}`)
+  const body = encodeURIComponent(feedback.value.message)
+  window.open(`mailto:nishuoyang2023@163.com?subject=${subject}&body=${body}`, '_blank')
+  showFeedback.value = false
+  feedback.value = { subject: '', message: '' }
+}
 
 onMounted(() => {
   applyTheme()
@@ -125,7 +135,30 @@ function handleLogout() {
         <img src="/logo.jpeg" alt="奶龙" class="w-5 h-5 rounded-full object-cover inline-block" />
         奶龙 - 图片展示平台
       </p>
+      <button
+        class="mt-3 text-xl bg-transparent border-none cursor-pointer hover:scale-110 transition-transform"
+        @click="showFeedback = true"
+        title="意见反馈"
+      >
+        📧
+      </button>
     </footer>
+
+    <!-- 反馈弹窗 -->
+    <el-dialog v-model="showFeedback" title="意见反馈" width="480px">
+      <el-form label-position="top">
+        <el-form-item label="主题">
+          <el-input v-model="feedback.subject" placeholder="请输入反馈主题" maxlength="100" />
+        </el-form-item>
+        <el-form-item label="内容">
+          <el-input v-model="feedback.message" type="textarea" :rows="5" placeholder="请描述您的意见或建议..." maxlength="2000" show-word-limit />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showFeedback = false">取消</el-button>
+        <el-button type="primary" @click="submitFeedback">发送反馈</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 右下角设置浮动按钮 -->
     <div class="fixed bottom-6 right-6 z-50">
