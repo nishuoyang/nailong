@@ -28,6 +28,11 @@ export class MinioService implements OnModuleInit {
   }
 
   get baseUrl(): string {
+    // MINIO_PUBLIC_URL 用于浏览器可访问的图片 URL（生产环境应设为公网地址）
+    const publicUrl = this.configService.get<string>('MINIO_PUBLIC_URL')
+    if (publicUrl) {
+      return publicUrl.endsWith('/') ? `${publicUrl}${this.bucketName}` : `${publicUrl}/${this.bucketName}`
+    }
     const endpoint = this.configService.get<string>('MINIO_ENDPOINT', 'localhost')
     const port = Number(this.configService.get<string>('MINIO_PORT', '9000'))
     return `http://${endpoint}:${port}/${this.bucketName}`
