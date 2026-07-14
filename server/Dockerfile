@@ -13,15 +13,17 @@ RUN npm run build
 FROM node:20-slim
 WORKDIR /app
 
-# Prisma 引擎需要 OpenSSL（slim 镜像已自带，但确保安装）
+# Prisma 引擎需要 OpenSSL
 RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/entrypoint.sh ./
 
 RUN mkdir -p /app/data
+RUN chmod +x entrypoint.sh
 
 EXPOSE 3000
-CMD ["node", "dist/src/main"]
+CMD ["./entrypoint.sh"]
