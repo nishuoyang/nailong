@@ -105,18 +105,6 @@ function handleLogout() {
               退出
             </button>
           </template>
-          <template v-else>
-            <router-link to="/login" class="text-sm hover:text-blue-600 no-underline transition-colors"
-              :class="isDark ? 'text-gray-300' : 'text-gray-600'">
-              登录
-            </router-link>
-            <router-link
-              to="/register"
-              class="text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 no-underline transition-colors"
-            >
-              注册
-            </router-link>
-          </template>
         </div>
       </div>
     </header>

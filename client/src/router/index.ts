@@ -59,6 +59,11 @@ const router = createRouter({
       component: () => import('@/pages/UserProfilePage.vue'),
     },
     {
+      path: '/adminpage',
+      name: 'admin-entry',
+      component: () => import('@/pages/AdminPageEntry.vue'),
+    },
+    {
       path: '/admin',
       name: 'admin-dashboard',
       component: () => import('@/pages/admin/DashboardPage.vue'),
@@ -106,7 +111,7 @@ router.beforeEach(async (to, _from) => {
   }
 
   if (to.meta.requiresAuth && !authStore.isLoggedIn) {
-    return { name: 'login', query: { redirect: to.fullPath } }
+    return { name: 'admin-entry' }
   }
 
   if (to.meta.guest && authStore.isLoggedIn) {
