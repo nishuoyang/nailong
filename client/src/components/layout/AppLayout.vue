@@ -116,7 +116,7 @@ function handleLogout() {
 
     <!-- Footer -->
     <footer
-      class="border-t py-8 text-center text-sm transition-colors duration-300"
+      class="border-t py-8 text-center text-sm transition-colors duration-300 relative"
       :class="isDark ? 'border-gray-700 text-gray-500' : 'border-gray-200 text-gray-400'"
     >
       <p class="flex items-center justify-center gap-2">
@@ -124,7 +124,7 @@ function handleLogout() {
         奶龙 - 图片展示平台
       </p>
       <button
-        class="mt-3 text-xl bg-transparent border-none cursor-pointer hover:scale-110 transition-transform"
+        class="absolute left-6 top-1/2 -translate-y-1/2 text-xl bg-transparent border-none cursor-pointer hover:scale-110 transition-transform"
         @click="showFeedback = true"
         title="意见反馈"
       >
