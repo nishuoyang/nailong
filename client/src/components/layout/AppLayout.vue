@@ -123,6 +123,12 @@ function handleLogout() {
         <img src="/logo.jpeg" alt="奶龙" class="w-5 h-5 rounded-full object-cover inline-block" />
         奶龙 - 图片展示平台
       </p>
+      <p class="mt-1">
+        <a href="https://beian.miit.gov.cn/" target="_blank" class="no-underline transition-colors"
+          :class="isDark ? 'text-gray-500 hover:text-gray-400' : 'text-gray-400 hover:text-gray-500'">
+          苏ICP备2026047429号-1
+        </a>
+      </p>
       <button
         class="absolute left-6 top-1/2 -translate-y-1/2 text-xl bg-transparent border-none cursor-pointer hover:scale-110 transition-transform"
         @click="showFeedback = true"
