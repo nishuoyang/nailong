@@ -17,6 +17,8 @@ services:
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/data/data.db
+      # 站点域名/IP
+      - CORS_ORIGINS=http://47.103.38.58,https://nailonghub.top
       # 静态文件
       - CLIENT_DIST_PATH=/app/client-dist
       # MinIO（容器内互联）
