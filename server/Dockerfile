@@ -23,14 +23,8 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/entrypoint.sh ./
 COPY --from=builder /app/seed.js ./
 
-# 客户端构建产物（生产环境通过卷挂载提供，此处为备用）
-COPY client/dist ./client-dist
-
-# SSL 证书（生产环境通过卷挂载提供，此处为备用）
-COPY static/nailonghub.top.key ./static/nailonghub.top.key
-COPY static/nailonghub.top.pem ./static/nailonghub.top.pem
-
-RUN mkdir -p /app/data
+# 客户端构建产物和 SSL 证书由 docker-compose.prod.yml 卷挂载提供
+RUN mkdir -p /app/data /app/client-dist /app/static
 RUN chmod +x entrypoint.sh
 
 EXPOSE 3000
