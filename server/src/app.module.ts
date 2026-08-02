@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common'
+import { existsSync } from 'fs'
+import { resolve } from 'path'
 import { ConfigModule } from '@nestjs/config'
 import { JwtModule } from '@nestjs/jwt'
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler'
+import { ServeStaticModule } from '@nestjs/serve-static'
 import { APP_GUARD, APP_INTERCEPTOR, APP_FILTER } from '@nestjs/core'
 import { PrismaModule } from './prisma/prisma.module'
 import { RedisModule } from './redis/redis.module'
@@ -18,6 +21,21 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { AllExceptionsFilter } from './common/filters/http-exception.filter'
 import { AppController } from './app.controller'
 
+// 客户端构建产物路径（仅在目录存在时启用静态文件服务）
+// Docker 中默认 client/dist；本地开发从 server/ 目录运行时设置 CLIENT_DIST_PATH=../client/dist
+const clientDistPath = resolve(process.env.CLIENT_DIST_PATH || 'client/dist')
+const staticImports = existsSync(clientDistPath)
+  ? [
+      ServeStaticModule.forRoot({
+        rootPath: clientDistPath,
+        // 排除 API 和 MinIO 代理路由，避免与后端接口冲突
+        exclude: ['/api/(.*)', '/minio/(.*)'],
+        // SPA 回退：非文件请求返回 index.html
+        serveRoot: '/',
+      }),
+    ]
+  : []
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -32,6 +50,7 @@ import { AppController } from './app.controller'
     UploadModule,
     LikesModule,
     AdminModule,
+    ...staticImports,
   ],
   controllers: [AppController],
   providers: [

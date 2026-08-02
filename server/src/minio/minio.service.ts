@@ -76,4 +76,14 @@ export class MinioService implements OnModuleInit {
   async getObject(objectName: string) {
     return this.client.getObject(this.bucketName, objectName)
   }
+
+  /** 从指定 bucket 获取对象（MinIO 代理使用） */
+  async getObjectFromBucket(bucket: string, objectName: string) {
+    return this.client.getObject(bucket, objectName)
+  }
+
+  /** 获取对象元数据 */
+  async statObject(bucket: string, objectName: string) {
+    return this.client.statObject(bucket, objectName)
+  }
 }

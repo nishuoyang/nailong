@@ -17,5 +17,11 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    headers: {
+      'X-Frame-Options': 'DENY',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy':
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' http://localhost:9000 data: https:; connect-src 'self' http://localhost:3000; frame-ancestors 'none';",
+    },
   },
 })
