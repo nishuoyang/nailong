@@ -32,7 +32,7 @@ const staticImports = existsSync(clientDistPath)
         exclude: ['/api/(.*)', '/minio/(.*)'],
         // SPA 回退：Vue Router history 模式下，非文件请求返回 index.html
         serveRoot: '/',
-        renderPath: '*',
+        renderPath: /^\//,
       }),
     ]
   : []
