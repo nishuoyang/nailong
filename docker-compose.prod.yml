@@ -12,8 +12,6 @@ services:
     volumes:
       - sqlite_data:/app/data
       - ./server/.env:/app/.env:ro
-      # 客户端构建产物（需先 cd client && npm run build）
-      - ./client/dist:/app/client-dist:ro
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/data/data.db
