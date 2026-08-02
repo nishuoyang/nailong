@@ -30,8 +30,9 @@ const staticImports = existsSync(clientDistPath)
         rootPath: clientDistPath,
         // 排除 API 和 MinIO 代理路由，避免与后端接口冲突
         exclude: ['/api/(.*)', '/minio/(.*)'],
-        // SPA 回退：非文件请求返回 index.html
+        // SPA 回退：Vue Router history 模式下，非文件请求返回 index.html
         serveRoot: '/',
+        renderPath: '*',
       }),
     ]
   : []
