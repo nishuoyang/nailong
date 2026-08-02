@@ -1,7 +1,4 @@
 import 'reflect-metadata';
-import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
-import { createServer } from 'http';
 import type { Request, Response } from 'express';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
@@ -24,20 +21,7 @@ async function bootstrap() {
     }
   }
 
-  // --- HTTPS 配置 ---
-  const httpsEnabled =
-    process.env.HTTPS_ENABLED === 'true' ||
-    (process.env.NODE_ENV === 'production' && process.env.HTTPS_ENABLED !== 'false');
-  const httpsOptions = httpsEnabled ? loadHttpsOptions() : undefined;
-
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    httpsOptions,
-  });
-
-  // 信任代理头（X-Forwarded-Proto 等）
-  if (httpsEnabled) {
-    app.set('trust proxy', 1);
-  }
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   app.setGlobalPrefix('api');
 
@@ -67,13 +51,10 @@ async function bootstrap() {
       'Content-Security-Policy',
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none';",
     );
-    if (httpsEnabled) {
-      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    }
     next();
   });
 
-  // --- MinIO 代理中间件（避免 HTTPS 页面加载 HTTP 图片导致 mixed content）---
+  // --- MinIO 代理中间件（统一图片域名，支持后续 HTTPS 升级）---
   const minioService = app.get(MinioService);
   app.use('/minio', async (req: Request, res: Response) => {
     try {
@@ -93,7 +74,7 @@ async function bootstrap() {
         const stat = await minioService.statObject(bucket, objectName);
         contentType = stat.metaData?.['content-type'] || contentType;
       } catch {
-        // stat 失败时使用默认 content-type，仍尝试获取对象
+        // stat 失败时根据扩展名推断
         const ext = objectName.split('.').pop()?.toLowerCase();
         const mimeMap: Record<string, string> = {
           jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
@@ -117,44 +98,8 @@ async function bootstrap() {
   });
 
   const port = parseInt(process.env.PORT || '3000', 10);
-  const protocol = httpsOptions ? 'https' : 'http';
   await app.listen(port);
-  console.log(`奶龙 server running on ${protocol}://localhost:${port}`);
-
-  // --- HTTP → HTTPS 重定向 ---
-  const redirectPort = parseInt(process.env.REDIRECT_HTTP_PORT || '', 10);
-  if (httpsEnabled && redirectPort) {
-    createServer((req, res) => {
-      const host = req.headers.host?.replace(/:\d+$/, '') || 'localhost';
-      const httpsPort = port === 443 ? '' : `:${port}`;
-      res.writeHead(301, { Location: `https://${host}${httpsPort}${req.url}` });
-      res.end();
-    }).listen(redirectPort);
-    console.log(`HTTP→HTTPS redirect listening on port ${redirectPort}`);
-  }
-}
-
-/**
- * 读取 SSL 证书文件，不存在时退出进程
- */
-function loadHttpsOptions(): { key: Buffer; cert: Buffer } {
-  const keyPath = resolve(process.env.SSL_KEY_PATH || 'static/nailonghub.top.key');
-  const certPath = resolve(process.env.SSL_CERT_PATH || 'static/nailonghub.top.pem');
-
-  if (!existsSync(keyPath)) {
-    console.error(`FATAL: SSL key not found at ${keyPath}`);
-    process.exit(1);
-  }
-  if (!existsSync(certPath)) {
-    console.error(`FATAL: SSL cert not found at ${certPath}`);
-    process.exit(1);
-  }
-
-  console.log(`SSL 证书已加载: ${certPath}`);
-  return {
-    key: readFileSync(keyPath),
-    cert: readFileSync(certPath),
-  };
+  console.log(`奶龙 server running on http://localhost:${port}`);
 }
 
 bootstrap();

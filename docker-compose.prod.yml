@@ -8,25 +8,15 @@ services:
     container_name: nailong-server
     restart: unless-stopped
     ports:
-      - "443:443"
-      - "80:80"
+      - "80:3000"
     volumes:
       - sqlite_data:/app/data
       - ./server/.env:/app/.env:ro
-      # SSL 证书（卷挂载，不进镜像层）
-      - ./static/nailonghub.top.key:/app/static/nailonghub.top.key:ro
-      - ./static/nailonghub.top.pem:/app/static/nailonghub.top.pem:ro
       # 客户端构建产物（需先 cd client && npm run build）
       - ./client/dist:/app/client-dist:ro
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/data/data.db
-      # HTTPS
-      - PORT=443
-      - HTTPS_ENABLED=true
-      - SSL_KEY_PATH=/app/static/nailonghub.top.key
-      - SSL_CERT_PATH=/app/static/nailonghub.top.pem
-      - REDIRECT_HTTP_PORT=80
       # 静态文件
       - CLIENT_DIST_PATH=/app/client-dist
       # MinIO（容器内互联）
@@ -35,8 +25,8 @@ services:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
       - MINIO_BUCKET=nailong-images
-      # MinIO 公网 URL（同源代理，避免 mixed content）
-      - MINIO_PUBLIC_URL=https://nailonghub.top/minio
+      # MinIO 公网 URL（同源代理）
+      - MINIO_PUBLIC_URL=/minio
 
   redis:
     image: redis:7-alpine

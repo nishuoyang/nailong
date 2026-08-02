@@ -23,11 +23,9 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/entrypoint.sh ./
 COPY --from=builder /app/seed.js ./
 
-# 客户端构建产物和 SSL 证书由 docker-compose.prod.yml 卷挂载提供
-RUN mkdir -p /app/data /app/client-dist /app/static
+# 客户端构建产物由 docker-compose.prod.yml 卷挂载提供
+RUN mkdir -p /app/data /app/client-dist
 RUN chmod +x entrypoint.sh
 
 EXPOSE 3000
-EXPOSE 443
-EXPOSE 80
 CMD ["./entrypoint.sh"]
