@@ -58,8 +58,9 @@ async function bootstrap() {
   const minioService = app.get(MinioService);
   app.use('/minio', async (req: Request, res: Response) => {
     try {
-      // 路径格式: /minio/{bucket}/{objectName}
-      const path = decodeURIComponent(req.path.replace(/^\/minio\//, ''));
+      // app.use('/minio') 挂载后 req.path 已剥离前缀（只剩 /{bucket}/{object}），
+      // 直接用 req.path 解析，不要再 replace /^\/minio\//
+      const path = decodeURIComponent(req.path.slice(1)); // 去掉开头的 /
       const slashIdx = path.indexOf('/');
       if (slashIdx < 0) {
         res.status(400).json({ message: 'Invalid path' });
