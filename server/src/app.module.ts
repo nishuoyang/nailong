@@ -29,11 +29,12 @@ const staticImports = existsSync(clientDistPath)
       ServeStaticModule.forRoot({
         rootPath: clientDistPath,
         // 排除 API 和 MinIO 代理路由，避免与后端接口冲突
-        exclude: ['/api/(.*)', '/minio/(.*)'],
+        // 注意：Express 4 内部使用 path-to-regexp@0.1.x，(.*) 编译成 (?:\.(.*)) 要求路径含点号，
+        // 必须用 * 通配符才能匹配无扩展名的路由（/featured、/admin 等）
+        exclude: ['/api/*', '/minio/*'],
         // SPA 回退：Vue Router history 模式下，非文件请求返回 index.html
-        // 注意：renderPath 必须是字符串（内部 validatePath 调用 charAt）
-        // 不要设置 serveRoot：它会与 renderPath 字符串拼接导致双斜杠 //(.*) 匹配失败
-        renderPath: '/(.*)',
+        // renderPath 必须是字符串（内部 validatePath 调用 charAt）；用 * 而非 (.*)
+        renderPath: '*',
       }),
     ]
   : []
