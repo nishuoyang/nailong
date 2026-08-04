@@ -32,7 +32,7 @@ const staticImports = existsSync(clientDistPath)
         exclude: ['/api/(.*)', '/minio/(.*)'],
         // SPA 回退：Vue Router history 模式下，非文件请求返回 index.html
         // 注意：renderPath 必须是字符串（内部 validatePath 调用 charAt）
-        serveRoot: '/',
+        // 不要设置 serveRoot：它会与 renderPath 字符串拼接导致双斜杠 //(.*) 匹配失败
         renderPath: '/(.*)',
       }),
     ]
