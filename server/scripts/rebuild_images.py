@@ -22,7 +22,7 @@ import shutil
 import sqlite3
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 # 可调整的路径
 DB_PATH = "/var/lib/docker/volumes/nailonghub_sqlite_data/_data/data.db"
@@ -81,7 +81,23 @@ def main() -> int:
         shutil.copy2(DB_PATH, backup)
         print(f"[OK] 数据库已备份 -> {backup}")
 
-    # 3. 已有 URL（幂等）
+    # 3. 修复历史写入的空格格式日期（Prisma SQLite 要求 ISO 8601，如 2026-07-15T22:03:45.495Z）
+    def norm_date(v: str) -> str:
+        if v and "T" not in v:
+            return v.replace(" ", "T") + "Z"
+        return v
+
+    fixed_rows = 0
+    for rid, ca, ua in cur.execute("SELECT id, created_at, updated_at FROM Image"):
+        nca, nua = norm_date(ca or ""), norm_date(ua or "")
+        if nca != ca or nua != ua:
+            cur.execute("UPDATE Image SET created_at=?, updated_at=? WHERE id=?", (nca, nua, rid))
+            fixed_rows += 1
+    if fixed_rows:
+        conn.commit()
+        print(f"[FIX] 已修复日期格式: {fixed_rows} 条记录")
+
+    # 4. 已有 URL（幂等）
     existing = {r[0] for r in cur.execute("SELECT url FROM Image")}
     print(f"[INFO] 数据库中已有图片记录: {len(existing)} 条")
 
@@ -128,14 +144,22 @@ def main() -> int:
             else None
         )
 
-        # 从文件名提取时间戳（毫秒）作为 createdAt
+        # 从文件名提取时间戳（毫秒）作为 createdAt（Prisma SQLite 需要 ISO 8601 格式）
         m = re.match(r"(\d{13})", name)
-        created = (
-            datetime.fromtimestamp(int(m.group(1)) / 1000)
-            if m
-            else datetime.now()
-        )
-        title = f"恢复图片-{created.strftime('%Y-%m-%d')}" if m else name
+        if m:
+            ts = int(m.group(1))
+            created = (
+                datetime.fromtimestamp(ts // 1000, tz=timezone.utc)
+                .strftime("%Y-%m-%dT%H:%M:%S")
+                + f".{ts % 1000:03d}Z"
+            )
+        else:
+            created = (
+                datetime.now(tz=timezone.utc)
+                .strftime("%Y-%m-%dT%H:%M:%S")
+                + f".{datetime.now().microsecond // 1000:03d}Z"
+            )
+        title = f"恢复图片-{created[:10]}" if m else name
         description = "图片文件由数据恢复脚本自动重建，原标题与互动数据已随旧容器丢失。"
 
         cur.execute(
