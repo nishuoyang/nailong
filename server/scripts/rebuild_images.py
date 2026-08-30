@@ -88,7 +88,8 @@ def main() -> int:
         return v
 
     fixed_rows = 0
-    for rid, ca, ua in cur.execute("SELECT id, created_at, updated_at FROM Image"):
+    # 注意：必须先用 fetchall() 取出全部行，再执行 UPDATE，否则迭代会被提前终止
+    for rid, ca, ua in cur.execute("SELECT id, created_at, updated_at FROM Image").fetchall():
         nca, nua = norm_date(ca or ""), norm_date(ua or "")
         if nca != ca or nua != ua:
             cur.execute("UPDATE Image SET created_at=?, updated_at=? WHERE id=?", (nca, nua, rid))
