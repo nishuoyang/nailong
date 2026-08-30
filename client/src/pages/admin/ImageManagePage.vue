@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, reactive, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
-import { getAdminImages, updateImageStatus, deleteImage, toggleFeatured } from '@/api/admin'
+import { getAdminImages, updateImageStatus, deleteImage, toggleFeatured, updateImage } from '@/api/admin'
+import { getCategories } from '@/api/images'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ProfileLayout from '@/components/layout/ProfileLayout.vue'
 
@@ -40,6 +41,46 @@ const featuredMutation = useMutation({
   onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin-images'] }); ElMessage.success('操作成功') },
   onError: (err: any) => ElMessage.error(err.response?.data?.message || '操作失败'),
 })
+
+// —— 编辑图片信息 ——
+const dialogVisible = ref(false)
+const editingId = ref('')
+const editForm = reactive({ title: '', description: '', categoryIds: [] as string[] })
+
+const { data: categories } = useQuery({
+  queryKey: ['categories'],
+  queryFn: () => getCategories().then((r) => r.data.data),
+})
+
+const editMutation = useMutation({
+  mutationFn: ({ id, data }: { id: string; data: { title: string; description: string; categoryIds: string[] } }) =>
+    updateImage(id, data),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ['admin-images'] })
+    ElMessage.success('保存成功')
+    dialogVisible.value = false
+  },
+  onError: (err: any) => ElMessage.error(err.response?.data?.message || '保存失败'),
+})
+
+function openEdit(row: any) {
+  editingId.value = row.id
+  editForm.title = row.title || ''
+  editForm.description = row.description || ''
+  editForm.categoryIds = (row.categories || []).map((c: any) => c.category.id)
+  dialogVisible.value = true
+}
+
+function saveEdit() {
+  if (!editForm.title.trim()) {
+    ElMessage.warning('标题不能为空')
+    return
+  }
+  editMutation.mutate({
+    id: editingId.value,
+    data: { title: editForm.title, description: editForm.description, categoryIds: editForm.categoryIds },
+  })
+}
 
 async function handleDelete(id: string, title: string) {
   try {
@@ -112,7 +153,7 @@ const menuItems = [
             <el-tag :type="getStatusTag(row.status).type" size="small">{{ getStatusTag(row.status).label }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="330" fixed="right">
           <template #default="{ row }">
             <div class="flex gap-1 flex-wrap">
               <el-button v-if="row.status === 'pending'" type="success" size="small"
@@ -127,6 +168,9 @@ const menuItems = [
               <el-button v-if="row.status === 'offline'" type="success" size="small"
                 :loading="statusMutation.isPending.value"
                 @click="statusMutation.mutate({ id: row.id, status: 'approved' })">上架</el-button>
+              <el-button size="small" plain :loading="editMutation.isPending.value" @click="openEdit(row)">
+                编辑
+              </el-button>
               <el-button
                 :type="row.isFeatured ? 'warning' : 'info'"
                 size="small"
@@ -149,5 +193,27 @@ const menuItems = [
       <el-pagination v-model:current-page="page" :page-size="20" :total="data.meta.total"
         background layout="prev, pager, next" />
     </div>
+
+    <!-- 编辑图片信息弹窗 -->
+    <el-dialog v-model="dialogVisible" title="编辑图片" width="480px">
+      <el-form label-position="top">
+        <el-form-item label="标题" required>
+          <el-input v-model="editForm.title" placeholder="请输入图片标题" maxlength="100" show-word-limit />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="editForm.description" type="textarea" :rows="3"
+            placeholder="图片描述（可选）" maxlength="500" show-word-limit />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-select v-model="editForm.categoryIds" multiple clearable placeholder="选择分类（可多选）" style="width: 100%">
+            <el-option v-for="c in categories || []" :key="c.id" :label="c.name" :value="c.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editMutation.isPending.value" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
   </ProfileLayout>
 </template>

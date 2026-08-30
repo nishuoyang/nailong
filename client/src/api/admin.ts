@@ -17,6 +17,13 @@ export function toggleFeatured(id: string) {
   return request.patch(`/admin/images/${id}/featured`)
 }
 
+export function updateImage(
+  id: string,
+  data: { title?: string; description?: string; categoryIds?: string[] },
+) {
+  return request.patch(`/admin/images/${id}`, data)
+}
+
 export function deleteImage(id: string) {
   return request.delete(`/admin/images/${id}`)
 }

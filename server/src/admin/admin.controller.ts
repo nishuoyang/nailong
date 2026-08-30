@@ -31,6 +31,14 @@ export class AdminController {
     return this.adminService.toggleFeatured(id)
   }
 
+  @Patch('images/:id')
+  async updateImage(
+    @Param('id') id: string,
+    @Body() body: { title?: string; description?: string; categoryIds?: string[] },
+  ) {
+    return this.adminService.updateImage(id, body)
+  }
+
   @Delete('images/:id')
   async deleteImage(@Param('id') id: string) {
     return this.adminService.deleteImage(id)

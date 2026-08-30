@@ -90,6 +90,46 @@ export class AdminService {
     return { isFeatured: updated.isFeatured }
   }
 
+  async updateImage(
+    id: string,
+    data: { title?: string; description?: string; categoryIds?: string[] },
+  ) {
+    const image = await this.prisma.image.findUnique({ where: { id } })
+    if (!image) throw new NotFoundException('图片不存在')
+
+    if (data.title !== undefined && !data.title.trim()) {
+      throw new BadRequestException('标题不能为空')
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.image.update({
+        where: { id },
+        data: {
+          ...(data.title !== undefined ? { title: data.title.trim() } : {}),
+          ...(data.description !== undefined ? { description: data.description } : {}),
+        },
+      })
+
+      // 可选：更新图片分类
+      if (data.categoryIds !== undefined) {
+        const count = await tx.category.count({
+          where: { id: { in: data.categoryIds } },
+        })
+        if (count !== data.categoryIds.length) {
+          throw new BadRequestException('存在无效的分类')
+        }
+        await tx.imagesOnCategories.deleteMany({ where: { imageId: id } })
+        if (data.categoryIds.length > 0) {
+          await tx.imagesOnCategories.createMany({
+            data: data.categoryIds.map((categoryId) => ({ imageId: id, categoryId })),
+          })
+        }
+      }
+
+      return updated
+    })
+  }
+
   async deleteImage(id: string) {
     const image = await this.prisma.image.findUnique({ where: { id } })
     if (!image) throw new NotFoundException('图片不存在')
