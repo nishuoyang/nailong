@@ -6,6 +6,7 @@ export interface ImageItem {
   description: string | null
   url: string
   thumbnailUrl: string | null
+  thumbnailSmUrl?: string | null
   userId: string
   status: string
   likeCount: number

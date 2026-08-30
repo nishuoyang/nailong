@@ -61,7 +61,7 @@ function handleLogout() {
       <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
         <div class="flex items-center gap-8">
           <router-link to="/" class="text-2xl font-bold text-blue-600 no-underline flex items-center gap-2">
-            <img src="/logo.jpeg" alt="奶龙" class="w-8 h-8 rounded-full object-cover" />
+            <img src="/logo.png" alt="奶龙" class="w-8 h-8 rounded-full object-cover" />
             奶龙
           </router-link>
           <nav class="hidden md:flex items-center gap-6">
@@ -76,6 +76,10 @@ function handleLogout() {
             <router-link to="/" class="hover:text-blue-600 no-underline transition-colors"
               :class="isDark ? 'text-gray-300' : 'text-gray-600'">
               发现
+            </router-link>
+            <router-link to="/story" class="hover:text-blue-600 no-underline transition-colors"
+              :class="isDark ? 'text-gray-300' : 'text-gray-600'">
+              奶蛙史
             </router-link>
           </nav>
         </div>
@@ -120,7 +124,7 @@ function handleLogout() {
       :class="isDark ? 'border-gray-700 text-gray-500' : 'border-gray-200 text-gray-400'"
     >
       <p class="flex items-center justify-center gap-2">
-        <img src="/logo.jpeg" alt="奶龙" class="w-5 h-5 rounded-full object-cover inline-block" />
+        <img src="/logo.png" alt="奶龙" class="w-5 h-5 rounded-full object-cover inline-block" />
         奶龙 - 图片展示平台
       </p>
       <p class="mt-1">

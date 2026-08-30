@@ -64,8 +64,8 @@ const { data: images, isLoading: imagesLoading } = useQuery({
         <p class="text-gray-400">还没有上传过图片</p>
       </div>
 
-      <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <ImageCard v-for="image in images.data" :key="image.id" :image="image" />
+      <div v-else class="columns-2 md:columns-3 gap-2 [column-fill:balance]">
+        <ImageCard v-for="image in images.data" :key="image.id" :image="image" class="mb-2 break-inside-avoid" />
       </div>
 
       <div v-if="images?.meta && images.meta.totalPages > 1" class="flex justify-center mt-6">

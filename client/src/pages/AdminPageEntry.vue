@@ -97,7 +97,7 @@ if (authStore.isLoggedIn && authStore.isAdmin) {
   <div class="min-h-screen bg-gray-100 flex items-center justify-center p-4">
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
-        <img src="/logo.jpeg" alt="奶龙" class="w-16 h-16 rounded-full object-cover mx-auto mb-3" />
+        <img src="/logo.png" alt="奶龙" class="w-16 h-16 rounded-full object-cover mx-auto mb-3" />
         <h1 class="text-xl font-bold">奶龙后台管理</h1>
       </div>
 

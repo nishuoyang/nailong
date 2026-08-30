@@ -49,8 +49,8 @@ const { data, isLoading } = useQuery({
       <p class="text-gray-400 text-lg">未找到相关图片</p>
     </div>
 
-    <div v-else class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-      <ImageCard v-for="image in data.data" :key="image.id" :image="image" />
+    <div v-else class="columns-2 md:columns-3 lg:columns-4 gap-2 [column-fill:balance]">
+      <ImageCard v-for="image in data.data" :key="image.id" :image="image" class="mb-2 break-inside-avoid" />
     </div>
 
     <div v-if="data?.meta && data.meta.totalPages > 1" class="flex justify-center mt-10">

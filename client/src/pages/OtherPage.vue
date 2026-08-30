@@ -17,7 +17,7 @@ const { data, isLoading } = useQuery({
   <div class="max-w-7xl mx-auto px-4 py-8">
     <div class="text-center mb-10">
       <div class="flex items-center justify-center gap-3 mb-3">
-        <img src="/logo.jpeg" alt="奶龙" class="w-12 h-12 rounded-full object-cover" />
+        <img src="/logo.png" alt="奶龙" class="w-12 h-12 rounded-full object-cover" />
         <h1 class="text-4xl font-bold">其他推荐</h1>
       </div>
       <p class="text-gray-500 text-lg">换个口味，发现不一样的精彩</p>
@@ -31,8 +31,8 @@ const { data, isLoading } = useQuery({
       <p class="text-gray-400 text-lg">暂无其他推荐图片</p>
     </div>
 
-    <div v-else class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-      <ImageCard v-for="image in data.data" :key="image.id" :image="image" />
+    <div v-else class="columns-2 md:columns-3 lg:columns-4 gap-2 [column-fill:balance]">
+      <ImageCard v-for="image in data.data" :key="image.id" :image="image" class="mb-2 break-inside-avoid" />
     </div>
 
     <div v-if="data?.meta && data.meta.totalPages > 1" class="flex justify-center mt-10">

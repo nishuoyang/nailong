@@ -10,6 +10,11 @@ const router = createRouter({
       component: () => import('@/pages/HomePage.vue'),
     },
     {
+      path: '/story',
+      name: 'story',
+      component: () => import('@/pages/StoryPage.vue'),
+    },
+    {
       path: '/images/:id',
       name: 'image-detail',
       component: () => import('@/pages/ImageDetailPage.vue'),

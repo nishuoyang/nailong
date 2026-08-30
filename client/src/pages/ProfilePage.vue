@@ -133,8 +133,8 @@ const menuItems = [
       <el-button type="primary" class="mt-3" @click="router.push('/upload')">去上传第一张</el-button>
     </div>
 
-    <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-4">
-      <ImageCard v-for="image in myImages.data" :key="image.id" :image="image" />
+    <div v-else class="columns-2 md:columns-3 gap-2 [column-fill:balance]">
+      <ImageCard v-for="image in myImages.data" :key="image.id" :image="image" class="mb-2 break-inside-avoid" />
     </div>
 
     <div v-if="myImages?.meta && myImages.meta.totalPages > 1" class="flex justify-center mt-6">
