@@ -19,3 +19,8 @@ credentials.json
 
 # 开发用静态资源
 static/
+
+.agents/
+.codex/
+AGENTS.md
+docs/

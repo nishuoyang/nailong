@@ -47,7 +47,6 @@ npm run dev
 
 | 角色 | 邮箱 | 密码 |
 |---|---|---|
-| 管理员 | admin@nailong.com | admin123 |
 | 普通用户 | user@nailong.com | user123 |
 
 ## Docker 生产部署
