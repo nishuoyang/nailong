@@ -1,0 +1,33 @@
+# 奶龙网站反向代理 + 自动 HTTPS
+#
+# Caddy 会自动完成：
+#   1. 向 Let's Encrypt 申请证书（HTTP-01 挑战，走 80 端口）
+#   2. 到期前自动续期（无需 cron / systemd timer）
+#   3. http:// -> https:// 跳转
+#   4. 设置 X-Forwarded-For / X-Forwarded-Proto 等转发头
+#
+# 证书与 ACME 账户保存在 /data（对应 compose 里的 caddy_data 卷），
+# 该卷必须持久化，否则每次重建容器都会重新签发，容易触发 Let's Encrypt 的速率限制。
+
+# ── 主域名 ──
+nailonghub.top {
+	reverse_proxy server:3000
+}
+
+# ── www 子域 ──
+# DNS 里 www 同样指向本机；301 到主域名避免重复内容（Caddy 会为它单独签发证书，
+# 否则访问 https://www.nailonghub.top 会报证书错误）
+www.nailonghub.top {
+	redir https://nailonghub.top{uri} permanent
+}
+
+# ── 直接用公网 IP 访问 ──
+# 公网 IP 无法签发受信任证书，因此显式声明为 http:// 站点（Caddy 不会尝试 ACME），
+# 保持 IP 直连可用（CORS_ORIGINS 里也放行了 http://47.103.38.58）
+http://47.103.38.58 {
+	reverse_proxy server:3000
+}
+
+# 注意：这里**没有**配置 encode / gzip。
+# 应用自身已经用 compression 中间件做 gzip（index.html / assets / API 均已实测生效），
+# Caddy 不会对已有 Content-Encoding 的响应重复压缩，因此保持单一职责、避免行为歧义。

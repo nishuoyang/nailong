@@ -24,6 +24,13 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  // --- 信任反向代理 ---
+  // 生产环境前面是 Caddy（终止 TLS 并反代）。若不声明信任代理，req.ip 会是 Caddy 的容器 IP，
+  // 而 ThrottlerGuard 正是用 req.ip 做 tracker（@nestjs/throttler 的 getTracker 直接 return req.ip），
+  // 结果就成了全站所有用户共用一个配额：100 次/分钟会退化成整个站点的总量上限。
+  // 设为 1 表示只信任最近一跳代理（Caddy 会自动写入 X-Forwarded-For）。
+  app.set('trust proxy', 1);
+
   app.setGlobalPrefix('api');
 
   // --- 响应压缩（gzip）---

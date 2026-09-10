@@ -1,20 +1,41 @@
 services:
+  # ── 反向代理 + 自动 HTTPS ──
+  # 80/443 由 Caddy 独占；应用不再对外发布端口，只在 compose 网络内以 server:3000 可达。
+  caddy:
+    # 2-alpine 是主版本固定 tag（当前解析为 v2.11.4）。不用 latest：latest 是滚动 tag，
+    # 可能在不经意间跨大版本升级导致行为变化。
+    image: caddy:2-alpine
+    container_name: nailong-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # 证书与 ACME 账户必须持久化，否则重建容器会重新签发（可能触发 LE 速率限制）
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+
   server:
     build:
       context: .
       dockerfile: server/Dockerfile
     container_name: nailong-server
     restart: unless-stopped
-    ports:
-      - "80:3000"
+    # 不再发布 80:3000 —— 由 Caddy 在前面终止 TLS 并反代到 server:3000。
+    # 需要直连调试时用 docker compose exec，不要把 3000 暴露到公网。
+    expose:
+      - "3000"
     volumes:
       - sqlite_data:/app/data
       - ./server/.env:/app/.env:ro
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/data/data.db
-      # 站点域名/IP
-      - CORS_ORIGINS=http://47.103.38.58,https://nailonghub.top
+      # 站点域名/IP（加了 http://nailonghub.top：HTTP 会在 Caddy 层 301，此处仅作兜底）
+      - CORS_ORIGINS=http://47.103.38.58,http://nailonghub.top,https://nailonghub.top
       # 静态文件
       - CLIENT_DIST_PATH=/app/client-dist
       # MinIO（容器内互联）
@@ -51,3 +72,6 @@ volumes:
   sqlite_data:
   redis_data:
   minio_data:
+  # Caddy 的证书与 ACME 账户
+  caddy_data:
+  caddy_config:
