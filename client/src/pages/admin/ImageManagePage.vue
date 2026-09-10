@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, reactive, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { getAdminImages, updateImageStatus, deleteImage, toggleFeatured, updateImage } from '@/api/admin'
 import { getCategories } from '@/api/images'
-import { ElMessage, ElMessageBox } from 'element-plus'
+// ElMessage / ElMessageBox 由 unplugin-auto-import 按需注入（见 vite.config.ts）
 import ProfileLayout from '@/components/layout/ProfileLayout.vue'
 
 const route = useRoute()
@@ -22,6 +22,7 @@ const { data, isLoading } = useQuery({
   queryKey: ['admin-images', page, statusFilter],
   queryFn: () =>
     getAdminImages({ page: page.value, size: 20, status: statusFilter.value || undefined }).then((r) => r.data),
+  placeholderData: keepPreviousData,
 })
 
 const statusMutation = useMutation({
@@ -50,6 +51,7 @@ const editForm = reactive({ title: '', description: '', categoryIds: [] as strin
 const { data: categories } = useQuery({
   queryKey: ['categories'],
   queryFn: () => getCategories().then((r) => r.data.data),
+  staleTime: 10 * 60_000,
 })
 
 const editMutation = useMutation({

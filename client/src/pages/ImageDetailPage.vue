@@ -1,25 +1,29 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { getImageById, likeImage, downloadImage } from '@/api/images'
 import { useAuthStore } from '@/stores/auth'
-import { ElMessage } from 'element-plus'
+// ElMessage 由 unplugin-auto-import 按需注入（见 vite.config.ts），勿手动从 'element-plus' 引入
 
 const route = useRoute()
 const authStore = useAuthStore()
 const queryClient = useQueryClient()
 
-const imageId = route.params.id as string
+// 必须用 computed：/images/A → /images/B 会复用同一组件实例（router-view 没有 :key）。
+// 注意 setQueryData 不会像 useQuery 那样自动解包 ref，必须传 imageId.value，
+// 否则 queryKey 会变成 ['image', ComputedRef]，与缓存里的真实键不匹配。
+const imageId = computed(() => route.params.id as string)
 
 const { data: image, isLoading, isError } = useQuery({
   queryKey: ['image', imageId],
-  queryFn: () => getImageById(imageId).then((r) => r.data.data),
+  queryFn: () => getImageById(imageId.value).then((r) => r.data.data),
 })
 
 const likeMutation = useMutation({
-  mutationFn: () => likeImage(imageId),
+  mutationFn: () => likeImage(imageId.value),
   onSuccess: (res) => {
-    queryClient.setQueryData(['image', imageId], (old: any) => {
+    queryClient.setQueryData(['image', imageId.value], (old: any) => {
       if (!old) return old
       return {
         ...old,
@@ -32,15 +36,15 @@ const likeMutation = useMutation({
 })
 
 const downloadMutation = useMutation({
-  mutationFn: () => downloadImage(imageId),
+  mutationFn: () => downloadImage(imageId.value),
   onSuccess: (res) => {
-    queryClient.setQueryData(['image', imageId], (old: any) => {
+    queryClient.setQueryData(['image', imageId.value], (old: any) => {
       if (!old) return old
       return { ...old, downloadCount: res.data.data.downloadCount }
     })
     // 通过服务端代理下载，使用 <a> 标签触发浏览器另存为
     const a = document.createElement('a')
-    a.href = `/api/images/${imageId}/file`
+    a.href = `/api/images/${imageId.value}/file`
     a.download = ''
     document.body.appendChild(a)
     a.click()
@@ -82,8 +86,17 @@ function handleDownload() {
   <div v-else class="max-w-5xl mx-auto px-4 py-8">
     <div class="bg-white rounded-xl shadow-sm overflow-hidden">
       <!-- Image -->
-      <div class="bg-gray-900 flex items-center justify-center p-4">
-        <img :src="image.url" :alt="image.title" class="max-h-[70vh] max-w-full object-contain" />
+      <!-- 用 _thumb_md（800px）而不是原图（上传上限 10MB）做页内预览；
+           原图仅通过「下载」按钮走 /api/images/:id/file 获取。
+           min-h 用于为图片预留高度，避免加载完成后把下方信息区推移（CLS）。 -->
+      <div class="bg-gray-900 flex items-center justify-center p-4 min-h-[45vh]">
+        <img
+          :src="image.thumbnailUrl || image.url"
+          :alt="image.title"
+          class="max-h-[70vh] max-w-full object-contain"
+          decoding="async"
+          fetchpriority="high"
+        />
       </div>
 
       <!-- Info -->

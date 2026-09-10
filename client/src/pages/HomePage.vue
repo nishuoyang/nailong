@@ -1,12 +1,23 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useQuery } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { getImages, getCategories, getLeaderboard, getDailyRecommendation } from '@/api/images'
 import ImageCard from '@/components/common/ImageCard.vue'
 
 const route = useRoute()
 const router = useRouter()
+
+// 左右侧栏的容器是 `hidden xl:block`，在 <1280px 时根本不渲染。
+// 之前无论视口多宽都会请求排行榜与每日推荐，手机上纯属浪费，这里按视口门控。
+const XL_QUERY = '(min-width: 1280px)'
+const isXl = ref(typeof window !== 'undefined' ? window.matchMedia(XL_QUERY).matches : false)
+const mql = typeof window !== 'undefined' ? window.matchMedia(XL_QUERY) : null
+const handleViewportChange = (e: MediaQueryListEvent) => {
+  isXl.value = e.matches
+}
+mql?.addEventListener('change', handleViewportChange)
+onUnmounted(() => mql?.removeEventListener('change', handleViewportChange))
 
 const page = ref(1)
 const category = ref<string>((route.query.category as string) || '')
@@ -31,6 +42,8 @@ watch(
 const { data: categories } = useQuery({
   queryKey: ['categories'],
   queryFn: () => getCategories().then((r) => r.data.data),
+  // 分类只有管理员改动时才会变，且改动后会 invalidateQueries(['categories'])
+  staleTime: 10 * 60_000,
 })
 
 const { data: imageData, isLoading, isError } = useQuery({
@@ -39,17 +52,23 @@ const { data: imageData, isLoading, isError } = useQuery({
     getImages({ page: page.value, size: 20, category: category.value, search: search.value, sort: sort.value }).then(
       (r) => r.data,
     ),
+  // 翻页时保留上一页，避免整页闪「加载中」、网格重建、滚动位置跳动
+  placeholderData: keepPreviousData,
 })
 
 const { data: leaderboard } = useQuery({
   queryKey: ['leaderboard'],
   queryFn: () => getLeaderboard().then((r) => r.data.data),
+  // 每周排行榜，10 分钟内不必重复请求
+  staleTime: 10 * 60_000,
+  enabled: isXl,
 })
 
 const { data: daily } = useQuery({
   queryKey: ['daily'],
   queryFn: () => getDailyRecommendation().then((r) => r.data.data),
   staleTime: 1000 * 60 * 30, // 30 分钟内不重复请求
+  enabled: isXl,
 })
 
 function handleSearch() {

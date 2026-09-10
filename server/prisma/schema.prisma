@@ -22,6 +22,11 @@ model User {
   images    Image[]
   likes     Like[]
   downloads Download[]
+
+  // 后台用户列表：无过滤 + ORDER BY created_at DESC
+  @@index([createdAt])
+  // Bio 审核列表：WHERE bio_status=? + ORDER BY created_at DESC
+  @@index([bioStatus, createdAt])
 }
 
 model Category {
@@ -56,7 +61,12 @@ model Image {
   likes      Like[]
   downloads  Download[]
 
+  // 后台列表 / 精选：WHERE status=? + ORDER BY created_at DESC
   @@index([status, createdAt])
+  // 每日上传配额校验：WHERE user_id=? AND created_at>=?；个人「我的作品」列表
+  @@index([userId, createdAt])
+  // 公开个人主页作品：WHERE user_id=? AND status='approved' + ORDER BY created_at DESC
+  @@index([userId, status, createdAt])
 }
 
 model ImagesOnCategories {
@@ -67,6 +77,8 @@ model ImagesOnCategories {
   category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@id([imageId, categoryId])
+  // 主键是 [imageId, categoryId]，按 categoryId 单列查询（删除分类前统计图片数）用不到前缀
+  @@index([categoryId])
 }
 
 model Like {
@@ -79,6 +91,8 @@ model Like {
   image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
 
   @@unique([userId, imageId])
+  // 唯一索引以 userId 为前缀，无法服务 image_id 单列查找（删除图片时的级联删除）
+  @@index([imageId])
 }
 
 model Download {
@@ -88,5 +102,10 @@ model Download {
   createdAt DateTime @default(now()) @map("created_at")
 
   user  User  @relation(fields: [userId], references: [id])
-  image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  image Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  // 每日下载配额校验：WHERE user_id=? AND created_at>=?（实测原本是全表 SCAN）
+  @@index([userId, createdAt])
+  // 删除图片时的级联删除
+  @@index([imageId])
 }

@@ -77,8 +77,17 @@ export class MinioService implements OnModuleInit {
     return this.client.getObject(this.bucketName, objectName)
   }
 
-  /** 从指定 bucket 获取对象（MinIO 代理使用） */
-  async getObjectFromBucket(bucket: string, objectName: string) {
+  /**
+   * 从指定 bucket 获取对象（MinIO 代理使用）
+   *
+   * ⚠️ minio 客户端的 `getObject()` **不支持** offset/length —— 它内部固定以
+   * `getPartialObject(bucket, name, 0, 0, ...)` 调用，多传的 getOpts 只用于 versionId。
+   * 要读取对象的某个片段（Range 请求）必须直接调用 `getPartialObject()`。
+   */
+  async getObjectFromBucket(bucket: string, objectName: string, offset?: number, length?: number) {
+    if (offset !== undefined) {
+      return this.client.getPartialObject(bucket, objectName, offset, length)
+    }
     return this.client.getObject(bucket, objectName)
   }
 

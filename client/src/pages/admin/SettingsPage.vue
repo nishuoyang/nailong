@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import request from '@/utils/request'
-import { ElMessage } from 'element-plus'
+// ElMessage 由 unplugin-auto-import 按需注入（见 vite.config.ts）
 import ProfileLayout from '@/components/layout/ProfileLayout.vue'
 
 const queryClient = useQueryClient()
@@ -56,7 +56,7 @@ const menuItems = [
         <el-switch
           :model-value="settings?.registrationOpen === false"
           :loading="mutation.isPending.value"
-          @change="(val: boolean) => mutation.mutate({ registrationOpen: !val })"
+          @change="(val: string | number | boolean) => mutation.mutate({ registrationOpen: !val })"
         />
       </div>
       <div class="flex items-center justify-between py-4">
@@ -67,7 +67,7 @@ const menuItems = [
         <el-switch
           :model-value="settings?.loginRestricted === true"
           :loading="mutation.isPending.value"
-          @change="(val: boolean) => mutation.mutate({ loginRestricted: val })"
+          @change="(val: string | number | boolean) => mutation.mutate({ loginRestricted: Boolean(val) })"
         />
       </div>
     </div>

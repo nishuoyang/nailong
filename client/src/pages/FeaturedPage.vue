@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { getFeatured } from '@/api/images'
 import ImageCard from '@/components/common/ImageCard.vue'
 
@@ -10,6 +10,8 @@ const { data, isLoading } = useQuery({
   queryKey: ['featured', page],
   queryFn: () =>
     getFeatured({ page: page.value, size: 20 }).then((r) => r.data),
+  // 翻页时保留上一页数据，避免整页闪「加载中」并让网格/图片重建、滚动位置跳动
+  placeholderData: keepPreviousData,
 })
 </script>
 

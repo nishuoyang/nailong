@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useQuery, useQueryClient } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { getMe } from '@/api/auth'
 import request from '@/utils/request'
 import ProfileLayout from '@/components/layout/ProfileLayout.vue'
 import ImageCard from '@/components/common/ImageCard.vue'
-import { ElMessage } from 'element-plus'
+// ElMessage 由 unplugin-auto-import 按需注入（见 vite.config.ts）
 
 const router = useRouter()
 const queryClient = useQueryClient()
@@ -28,6 +28,7 @@ const { data: myImages, isLoading } = useQuery({
       data: r.data.data,
       meta: r.data.meta,
     })),
+  placeholderData: keepPreviousData,
 })
 
 function startEditBio() {

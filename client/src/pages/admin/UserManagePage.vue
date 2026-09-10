@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useQuery, useQueryClient } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
 import request from '@/utils/request'
-import { ElMessage } from 'element-plus'
+// ElMessage 由 unplugin-auto-import 按需注入（见 vite.config.ts）
 import ProfileLayout from '@/components/layout/ProfileLayout.vue'
 
 const queryClient = useQueryClient()
@@ -19,6 +19,7 @@ const { data, isLoading } = useQuery({
       data: r.data.data,
       meta: r.data.meta,
     })),
+  placeholderData: keepPreviousData,
 })
 
 function openEdit(user: any) {

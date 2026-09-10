@@ -2,5 +2,8 @@ node_modules
 dist
 prisma/*.db
 prisma/*.db-journal
+# 启用 WAL 后会产生的伴生文件，不应进入镜像
+prisma/*.db-wal
+prisma/*.db-shm
 .git
 .gitignore

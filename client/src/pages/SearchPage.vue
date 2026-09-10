@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { useQuery } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { getImages } from '@/api/images'
 import ImageCard from '@/components/common/ImageCard.vue'
 
@@ -29,6 +29,7 @@ const { data, isLoading } = useQuery({
       category: category.value,
     }).then((r) => r.data),
   enabled: !!searchQuery.value || !!category.value,
+  placeholderData: keepPreviousData,
 })
 </script>
 

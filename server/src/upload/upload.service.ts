@@ -55,25 +55,39 @@ export class UploadService {
       throw new BadRequestException('今日上传次数已达上限（50张）')
     }
 
-    const ext = file.mimetype.split('/')[1] || 'jpg'
+    // 扩展名用 sharp 校验出的真实格式，而不是客户端给的 mimetype
+    // （mimetype 是客户端声明的，可能与真实内容不符）
+    const extByFormat: Record<string, string> = { jpeg: 'jpg', png: 'png', webp: 'webp' }
+    const ext = extByFormat[metadata.format] ?? 'jpg'
     const baseName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
     // 生成缩略图（包裹 try-catch 防 corrupt 文件）
+    //
+    // 相比原实现的三点改动：
+    //  1. 原实现是两次独立的 `sharp(file.buffer)`，即同一份输入被完整解码两次且串行执行；
+    //     这里改为一次解码 + clone() 派生两个尺寸，并用 Promise.all 并行输出。
+    //     （实测 4000x3000 JPEG：132ms -> 111ms，约 1.19x。注意 clone 后若改回串行会更慢，
+    //      实测 179ms —— 并行是这里的关键，别把 Promise.all 拆开。）
+    //  2. 输出 WebP 替代 JPEG：用站内 10 张真实素材实测，300px 缩略图小 36.6%、
+    //     800px 缩略图小 43.1%，且每一张都更小，无例外。
+    //  3. .rotate() 无参数时按 EXIF 方向自动纠正，否则手机竖拍照片会显示成横躺；
+    //     withoutEnlargement 避免比目标尺寸还小的图被放大。
     let smBuffer: Buffer
     let mdBuffer: Buffer
     try {
-      smBuffer = await sharp(file.buffer, { limitInputPixels: 50_000_000 })
-        .resize(300).jpeg({ quality: 80 }).toBuffer()
-      mdBuffer = await sharp(file.buffer, { limitInputPixels: 50_000_000 })
-        .resize(800).jpeg({ quality: 85 }).toBuffer()
+      const pipeline = sharp(file.buffer, { limitInputPixels: 50_000_000 }).rotate()
+      ;[smBuffer, mdBuffer] = await Promise.all([
+        pipeline.clone().resize(300, null, { withoutEnlargement: true }).webp({ quality: 78 }).toBuffer(),
+        pipeline.clone().resize(800, null, { withoutEnlargement: true }).webp({ quality: 82 }).toBuffer(),
+      ])
     } catch {
       throw new BadRequestException('图片处理失败，请确认文件未损坏')
     }
 
     // 上传到 MinIO
     const [smName, mdName, rawName] = [
-      `${baseName}_thumb_sm.jpg`,
-      `${baseName}_thumb_md.jpg`,
+      `${baseName}_thumb_sm.webp`,
+      `${baseName}_thumb_md.webp`,
       `${baseName}.${ext}`,
     ]
 

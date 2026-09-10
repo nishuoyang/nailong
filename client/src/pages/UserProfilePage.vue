@@ -1,25 +1,28 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { useQuery } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import request from '@/utils/request'
 import ImageCard from '@/components/common/ImageCard.vue'
 
 const route = useRoute()
-const userId = route.params.id as string
+// 必须用 computed：/users/A → /users/B 会复用同一个组件实例（App.vue 的 router-view 没有 :key），
+// 而卡片上的作者链接正好会产生这种跳转，直接读 route.params.id 会一直是旧 id。
+const userId = computed(() => route.params.id as string)
 const page = ref(1)
 
 const { data: profile, isLoading: profileLoading } = useQuery({
   queryKey: ['user-profile', userId],
-  queryFn: () => request.get(`/users/${userId}`).then((r) => r.data.data),
+  queryFn: () => request.get(`/users/${userId.value}`).then((r) => r.data.data),
 })
 
 const { data: images, isLoading: imagesLoading } = useQuery({
   queryKey: ['user-images', userId, page],
   queryFn: () =>
     request
-      .get(`/users/${userId}/images`, { params: { page: page.value, size: 20 } })
+      .get(`/users/${userId.value}/images`, { params: { page: page.value, size: 20 } })
       .then((r) => ({ data: r.data.data, meta: r.data.meta })),
+  placeholderData: keepPreviousData,
 })
 </script>
 

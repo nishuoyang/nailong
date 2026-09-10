@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { uploadImage } from '@/api/upload'
 import { getCategories } from '@/api/images'
-import { ElMessage } from 'element-plus'
+// ElMessage 由 unplugin-auto-import 按需注入（见 vite.config.ts）
 import type { FormInstance, FormRules, UploadFile } from 'element-plus'
 
 const router = useRouter()
@@ -32,6 +32,8 @@ const rules: FormRules = {
 const { data: categories } = useQuery({
   queryKey: ['categories'],
   queryFn: () => getCategories().then((r) => r.data.data),
+  // 与首页共用同一份缓存（同一个 queryKey）；分类极少变动
+  staleTime: 10 * 60_000,
 })
 
 function handleFileChange(file: UploadFile) {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
+import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import { getOther } from '@/api/images'
 import ImageCard from '@/components/common/ImageCard.vue'
 
@@ -10,6 +10,7 @@ const { data, isLoading } = useQuery({
   queryKey: ['other', page],
   queryFn: () =>
     getOther({ page: page.value, size: 20 }).then((r) => r.data),
+  placeholderData: keepPreviousData,
 })
 </script>
 

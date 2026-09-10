@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { getCategories } from '@/api/images'
 import { createCategory, updateCategory, deleteCategory } from '@/api/admin'
-import { ElMessage, ElMessageBox } from 'element-plus'
+// ElMessage / ElMessageBox 由 unplugin-auto-import 按需注入（见 vite.config.ts）
 import type { FormInstance } from 'element-plus'
 import ProfileLayout from '@/components/layout/ProfileLayout.vue'
 
@@ -16,9 +16,12 @@ const formRef = ref<FormInstance>()
 const form = ref({ name: '', slug: '', description: '' })
 const submitting = ref(false)
 
+// 与首页/上传页共用 ['categories'] 同一个缓存条目（同一个接口），
+// 之前用 ['admin-categories'] 会多存一份、并需要在两处分别 invalidate。
 const { data: categories, isLoading } = useQuery({
-  queryKey: ['admin-categories'],
+  queryKey: ['categories'],
   queryFn: () => getCategories().then((r) => r.data.data),
+  staleTime: 10 * 60_000,
 })
 
 function openCreate() {
@@ -26,7 +29,11 @@ function openCreate() {
   form.value = { name: '', slug: '', description: '' }; dialogVisible.value = true
 }
 
-function openEdit(cat: { id: string; name: string; slug: string; description: string | null }) {
+// el-table 的插槽行类型是 Record<PropertyKey, any>（DefaultRow），无法满足具名属性，
+// 因此这里用具名类型 + 模板处断言收窄，兼顾可读性与类型安全。
+type Category = { id: string; name: string; slug: string; description: string | null }
+
+function openEdit(cat: Category) {
   editingId.value = cat.id; dialogTitle.value = '编辑分类'
   form.value = { name: cat.name, slug: cat.slug, description: cat.description || '' }; dialogVisible.value = true
 }
@@ -40,7 +47,6 @@ async function handleSubmit() {
       if (editingId.value) { await updateCategory(editingId.value, form.value); ElMessage.success('更新成功') }
       else { await createCategory(form.value); ElMessage.success('创建成功') }
       dialogVisible.value = false
-      queryClient.invalidateQueries({ queryKey: ['admin-categories'] })
       queryClient.invalidateQueries({ queryKey: ['categories'] })
     } catch (err: any) { ElMessage.error(err.response?.data?.message || '操作失败') }
     finally { submitting.value = false }
@@ -53,7 +59,6 @@ async function handleDelete(id: string, name: string) {
       type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
     })
     await deleteCategory(id); ElMessage.success('已删除')
-    queryClient.invalidateQueries({ queryKey: ['admin-categories'] })
     queryClient.invalidateQueries({ queryKey: ['categories'] })
   } catch (err: any) { if (err !== 'cancel') ElMessage.error(err.response?.data?.message || '删除失败') }
 }
@@ -99,7 +104,7 @@ const menuItems = [
         </el-table-column>
         <el-table-column label="操作" width="180">
           <template #default="{ row }">
-            <el-button size="small" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" @click="openEdit(row as Category)">编辑</el-button>
             <el-button size="small" type="danger" plain @click="handleDelete(row.id, row.name)">删除</el-button>
           </template>
         </el-table-column>
