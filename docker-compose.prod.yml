@@ -31,9 +31,24 @@ services:
     volumes:
       - sqlite_data:/app/data
       - ./server/.env:/app/.env:ro
+      # ── 应用日志落盘（2026-09-11）──
+      # 必须是**宿主机 bind mount**，不能只靠 stdout：
+      # `docker logs` 读的是当前容器的 json-file，而 `docker compose up -d`
+      # （即每次发布）都会换一个新容器，旧容器的日志文件随之被删除 ——
+      # 两次 502 的现场和「查不清是谁删的图片」都是这么丢的。
+      # 用 bind mount 而不是命名卷，是为了在宿主机上直接 `tail -f logs/app.log`，
+      # 不必先 docker exec 或去 /var/lib/docker/volumes 里翻。
+      # 目录型挂载没有「单文件 bind mount 换 inode」那个坑（见 docs/ 坑 25）。
+      - ./logs:/app/logs
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/data/data.db
+      # 应用日志（AppFileLogger + entrypoint.sh 共用；见 server/src/common/logging/）
+      # 上限 = LOG_MAX_BYTES × LOG_MAX_FILES = 10 MiB × 5 = 50 MiB，滚动不掉。
+      - LOG_DIR=/app/logs
+      - LOG_FILE=app.log
+      - LOG_MAX_BYTES=10485760
+      - LOG_MAX_FILES=5
       # 站点域名/IP（加了 http://nailonghub.top：HTTP 会在 Caddy 层 301，此处仅作兜底）
       - CORS_ORIGINS=http://47.103.38.58,http://nailonghub.top,https://nailonghub.top
       # 静态文件

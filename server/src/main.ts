@@ -7,8 +7,18 @@ import * as compression from 'compression';
 import { AppModule } from './app.module';
 import { MinioService } from './minio/minio.service';
 import { streamObjectFromMinio } from './common/http/stream-object';
+import { AppFileLogger } from './common/logging/app-file-logger';
 
 async function bootstrap() {
+  // --- 应用日志落盘 ---
+  // 必须在**任何其它动作之前**装好：下面的生产环境校验失败会直接 process.exit(1)，
+  // 而那正是最需要留下证据的一刻。而 `docker logs` 只读当前容器 —— 每次发布
+  // （docker compose up -d）都换新容器，旧日志随之消失，事后无法取证。
+  // 详见 common/logging/app-file-logger.ts 顶部说明。
+  const fileLogger = new AppFileLogger();
+  fileLogger.installConsoleTee();
+  fileLogger.log(`应用日志文件：${fileLogger.describe()}`, 'AppLog');
+
   // --- 生产环境校验 ---
   if (process.env.NODE_ENV === 'production') {
     const jwtSecret = process.env.JWT_SECRET;
@@ -23,7 +33,7 @@ async function bootstrap() {
     }
   }
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger: fileLogger });
 
   // --- 信任反向代理 ---
   // 生产环境前面是 Caddy（终止 TLS 并反代）。若不声明信任代理，req.ip 会是 Caddy 的容器 IP，

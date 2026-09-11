@@ -20,6 +20,9 @@ credentials.json
 # 开发用静态资源
 static/
 
+# 应用日志（生产上是 ./logs bind mount 到容器 /app/logs）
+logs/
+
 .agents/
 .codex/
 AGENTS.md
