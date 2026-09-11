@@ -1,15 +1,15 @@
-import { Controller, Get, Patch, Delete, Post, Put, Param, Body, Query, ServiceUnavailableException } from '@nestjs/common'
+import { Controller, Get, Patch, Delete, Post, Put, Param, Body, Query, Req } from '@nestjs/common'
 import { RolesGuard } from '../common/guards/roles.guard'
 import { Roles } from '../common/decorators/roles.decorator'
 import { AdminService } from './admin.service'
-import { RedisService } from '../redis/redis.service'
+import { SettingsService } from '../settings/settings.service'
 
 @Controller('admin')
 @Roles('admin')
 export class AdminController {
   constructor(
     private adminService: AdminService,
-    private redisService: RedisService,
+    private settingsService: SettingsService,
   ) {}
 
   @Get('images')
@@ -64,34 +64,18 @@ export class AdminController {
 
   @Get('settings')
   async getSettings() {
-    const [registration, loginRestricted] = await Promise.all([
-      this.redisService.get('setting:registration'),
-      this.redisService.get('setting:login_restricted'),
-    ])
-    return {
-      registrationOpen: registration !== 'false',
-      loginRestricted: loginRestricted === 'true',
-    }
+    return this.settingsService.getAll()
   }
 
   @Patch('settings')
-  async updateSettings(@Body() body: { registrationOpen?: boolean; loginRestricted?: boolean }) {
-    // 这两个开关目前只存在 Redis 里（不在数据库），写失败却返回成功会让管理员误以为已生效，
-    // 而实际状态仍是「开放」——对「关闭注册」「仅管理员可登录」这种应急开关是危险的静默失败。
-    // 因此这里检查写入结果，失败就明确报错。
-    const writes: Array<Promise<boolean>> = []
-    if (body.registrationOpen !== undefined) {
-      writes.push(this.redisService.set('setting:registration', body.registrationOpen ? 'true' : 'false'))
-    }
-    if (body.loginRestricted !== undefined) {
-      writes.push(this.redisService.set('setting:login_restricted', body.loginRestricted ? 'true' : 'false'))
-    }
-
-    const results = await Promise.all(writes)
-    if (results.some((ok) => !ok)) {
-      throw new ServiceUnavailableException('设置保存失败：缓存服务不可用，请稍后重试')
-    }
-
-    return await this.getSettings()
+  async updateSettings(
+    @Body() body: { registrationOpen?: boolean; loginRestricted?: boolean },
+    @Req() req: { user?: { id?: string } },
+  ) {
+    // 开关存在数据库里（Setting 表），不再只存 Redis。
+    // 旧实现因为 Redis 是唯一存储，必须检查写入结果并在失败时返回 503，
+    // 否则会出现「提示已保存、实际没保存」；现在写库成功即真的持久化，
+    // 写失败会由 Prisma 抛错并被全局异常过滤器转成 500。
+    return this.settingsService.update(body, req.user?.id ?? null)
   }
 }

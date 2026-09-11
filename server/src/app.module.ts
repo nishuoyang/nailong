@@ -15,6 +15,7 @@ import { ImagesModule } from './images/images.module'
 import { UploadModule } from './upload/upload.module'
 import { LikesModule } from './likes/likes.module'
 import { AdminModule } from './admin/admin.module'
+import { SettingsModule } from './settings/settings.module'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard'
 import { RolesGuard } from './common/guards/roles.guard'
 import { ResponseInterceptor } from './common/interceptors/response.interceptor'
@@ -103,6 +104,7 @@ const staticImports = existsSync(clientDistPath)
     UploadModule,
     LikesModule,
     AdminModule,
+    SettingsModule,
     ...staticImports,
   ],
   controllers: [AppController],

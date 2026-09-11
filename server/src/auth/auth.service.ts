@@ -11,6 +11,7 @@ import * as bcrypt from 'bcrypt'
 import * as svgCaptcha from 'svg-captcha'
 import { PrismaService } from '../prisma/prisma.service'
 import { RedisService } from '../redis/redis.service'
+import { SettingsService } from '../settings/settings.service'
 import { RegisterDto } from './dto/register.dto'
 import { LoginDto } from './dto/login.dto'
 import { randomBytes } from 'crypto'
@@ -22,6 +23,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private redisService: RedisService,
+    private settingsService: SettingsService,
   ) {}
 
   async generateCaptcha() {
@@ -47,9 +49,9 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto) {
-    // 检查注册开关（fail-open：Redis 取不到值时视为开放，见 RedisService.get 的注释）
-    const registrationOpen = await this.redisService.get('setting:registration')
-    if (registrationOpen === 'false') {
+    // 检查注册开关。开关存在数据库里（不再只存 Redis）：
+    // Redis 被清空或短暂不可用都不会把它变回「开放」，见 SettingsService 的说明。
+    if (!(await this.settingsService.isRegistrationOpen())) {
       throw new BadRequestException('网站暂未开放注册')
     }
 
@@ -104,10 +106,8 @@ export class AuthService {
       throw new UnauthorizedException('邮箱或密码错误')
     }
 
-    // 登录限制：开启后仅管理员可登录
-    // （fail-open：Redis 取不到值时视为未开启限制，缓存故障不应导致全站无法登录）
-    const loginRestricted = await this.redisService.get('setting:login_restricted')
-    if (loginRestricted === 'true' && user.role !== 'admin') {
+    // 登录限制：开启后仅管理员可登录。同样存在数据库里，Redis 挂掉不影响这个判断。
+    if ((await this.settingsService.isLoginRestricted()) && user.role !== 'admin') {
       throw new UnauthorizedException('网站暂未开放登录')
     }
 

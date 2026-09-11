@@ -29,6 +29,25 @@ model User {
   @@index([bioStatus, createdAt])
 }
 
+/// 站点开关（关闭注册、限制登录等）。
+///
+/// 为什么需要这张表：这两个开关原先**只存在 Redis 里**。而 Redis 是缓存不是存储——
+/// 生产环境 `appendonly=no`（只有默认的 RDB 快照），且 RedisService.get 在 Redis 不可用时
+/// 返回 null，而调用方的判断是「等于 'false'/'true' 才拦截」，也就是 **fail-open**。
+/// 两个后果叠加起来是危险的：「关闭注册」「仅管理员可登录」这类应急开关一旦 Redis 被清空
+/// 或短暂不可用，就会**静默恢复成开放**，管理员却以为还关着。
+/// 设置必须落盘，缓存不能当唯一存储。
+///
+/// 表里只存「管理员显式改过」的项：默认值写在 SettingsService 里，
+/// 这样新增开关不需要迁移，也不会出现「迁移默认值」与「代码默认值」两处不一致。
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  /// 最后修改者的用户 id（审计用，可为空：迁移写入的行没有修改人）
+  updatedBy String?  @map("updated_by")
+}
+
 model Category {
   id          String   @id @default(uuid())
   name        String   @unique

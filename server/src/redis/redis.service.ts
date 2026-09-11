@@ -51,10 +51,13 @@ export class RedisService implements OnModuleDestroy {
   /**
    * 安全读：Redis 不可用时返回 null。
    *
-   * 这是「fail-open」：调用方必须把 null 当作「没有这个配置」处理。
-   * 对 `setting:registration` / `setting:login_restricted` 这类开关，
-   * 代码里的判断是「等于 'false'/'true' 才拦截」，所以取不到值即放行 —— 这正是我们想要的：
-   * 缓存故障不应该连带把登录注册整个功能打死。
+   * 这是「fail-open」：调用方必须把 null 当作「没读到」处理，并自行决定兜底值。
+   *
+   * ⚠️ 正因为 null 有歧义 ——「键不存在」和「Redis 挂了」返回的都是 null ——
+   * **绝不能把 Redis 当唯一存储**。站点开关（关闭注册 / 限制登录）原来就是这么存的，
+   * 于是 Redis 一被清空，两个开关就静默恢复成「开放」，管理员还以为关着。
+   * 开关现在落库了（见 SettingsService）；这里只放「丢了能重建」的数据（验证码、推荐缓存）。
+   * 确实需要区分这两种 null 时，用 status 判断或直接读数据库，不要靠猜。
    */
   async get(key: string): Promise<string | null> {
     try {
@@ -68,8 +71,8 @@ export class RedisService implements OnModuleDestroy {
   /**
    * 安全写：返回是否真的写成功。
    *
-   * 调用方在「写失败会导致状态显示与真实状态不一致」时必须检查返回值并报错，
-   * 例如后台的设置开关（开关只存在 Redis 里，写失败却返回成功会让管理员以为已经生效）。
+   * 调用方在「写失败会导致状态显示与真实状态不一致」时必须检查返回值并报错。
+   * 目前必须检查的是验证码：写失败还返回 SVG 的话，用户填对了也永远验证不过。
    *
    * @param ttlSeconds 传入则使用 SET key value EX ttl
    */
