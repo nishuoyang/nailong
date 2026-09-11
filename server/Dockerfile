@@ -1,5 +1,22 @@
+# ── 阶段 0：apt 源与超时调优（阶段 1 与运行阶段共用）──
+#
+# 为什么必须调优 —— 这是 2026-09-11 发布事故的第二层原因，靠 stale layer cache 掩盖了很久：
+# 默认源 deb.debian.org 在 BuildKit 构建容器里下载大索引会长时间卡住
+# （实测 8.7MB 的 Packages 索引 84 秒毫无进展，小文件却 1~5 秒就完成；
+#   真实构建因此累计挂了 10 分钟以上）。换成阿里云镜像后
+# `apt-get update` + `apt-get install` 合计 **51.8 秒**（实测）。
+#   - ForceIPv4：容器内若没有 IPv6 路由，避免先干等 AAAA 超时
+#   - 显式超时：保证最坏结果是「构建失败」，而不是「无限期挂住」
+#
+# 注意：运行阶段也继承这里的源配置（它需要 apt 装 openssl）。只影响容器内手动
+# 执行 apt 的行为，不影响应用运行。
+FROM node:20-slim AS apt-tuned
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+ && printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "2";\nAcquire::http::Timeout "20";\n' \
+      > /etc/apt/apt.conf.d/99-build-tuning
+
 # ── 阶段 1：构建服务端 ──
-FROM node:20-slim AS server-builder
+FROM apt-tuned AS server-builder
 WORKDIR /app
 
 # 给构建进程一个堆上限。
@@ -9,7 +26,12 @@ WORKDIR /app
 # 512MB 有充足余量。
 ENV NODE_OPTIONS=--max-old-space-size=512
 
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+# python3/make/g++ 是**必需**的，不是可选优化：bcrypt 的预编译包在本网络下载会失败
+# （实测 `node-pre-gyp ERR! not ok`），于是回落到源码编译；没有工具链时
+# `npm ci` 会直接以 exit 1 失败（实测验证过）。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY server/package*.json ./
 RUN npm ci
@@ -18,7 +40,7 @@ RUN npx prisma generate
 RUN npm run build
 
 # ── 阶段 2：构建客户端 ──
-FROM node:20-slim AS client-builder
+FROM apt-tuned AS client-builder
 WORKDIR /app
 
 ENV NODE_OPTIONS=--max-old-space-size=512
@@ -39,11 +61,16 @@ COPY client/ .
 RUN npm run build:assets
 
 # ── 阶段 3：运行镜像 ──
-FROM node:20-slim
+# 与构建阶段共用 apt-tuned 的源配置，否则这一步的 apt 会挂在 deb.debian.org 上。
+FROM apt-tuned
 WORKDIR /app
 
-# Prisma 引擎需要 OpenSSL
-RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+# Prisma 引擎需要 OpenSSL。
+# 实测 node:20-slim **不含** libssl.so.3 / libcrypto.so.3（dpkg 里也没有 libssl），
+# 所以这一步不能省。上面几行已解释为什么需要 --no-install-recommends 与镜像源调优。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl \
+ && rm -rf /var/lib/apt/lists/*
 
 # 服务端产物
 COPY --from=server-builder /app/dist ./dist
