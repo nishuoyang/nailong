@@ -1,13 +1,82 @@
 import 'reflect-metadata';
 import type { Request, Response } from 'express';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import * as compression from 'compression';
 import { AppModule } from './app.module';
 import { MinioService } from './minio/minio.service';
 import { streamObjectFromMinio } from './common/http/stream-object';
 import { AppFileLogger } from './common/logging/app-file-logger';
+
+/**
+ * 优雅关闭的硬上限。
+ *
+ * 必须**明显小于** docker 的停止宽限期（生产 compose 没设 stop_grace_period，
+ * 即 Docker 默认 10 秒），否则这个「强制退出」永远轮不到执行，等于没写。
+ */
+const SHUTDOWN_TIMEOUT_MS = 5000;
+
+/**
+ * 优雅关闭（2026-09-11）。
+ *
+ * 为什么必须有这段 —— 两条都是实测出来的，不是「最佳实践」式的装饰：
+ *
+ * 1. **在此之前，这个应用从未优雅关闭过。**
+ *    实测：`docker kill -s TERM` 之后 3 秒，容器状态仍然是 running —— SIGTERM 被完全忽略，
+ *    只能等 docker 的宽限期走完再 SIGKILL。
+ *    原因是应用就是容器的 PID 1（`entrypoint.sh` 里的 `exec node` 正是为了让
+ *    `docker stop` 的信号直达 node），而**内核对 PID 1 不施加信号的默认动作**：
+ *    disposition 为 SIG_DFL 时，SIGTERM 在 PID 1 上等同于被忽略。
+ *    **装上 handler 之后信号才会被投递** —— 这才是必须在这里注册 handler 的根本原因，
+ *    而不是「为了体面」。
+ *
+ * 2. 它造成的代价有两块，都不是理论问题：
+ *    - 每次发布/回滚都要白等 10 秒：旧容器早已收到停止请求却还在服务，而新容器必须
+ *      等旧容器退出之后才开始创建（生产实测：`docker compose up -d` 到新容器打出第一行
+ *      日志之间有 11.1 秒）。
+ *    - 正在传输的响应会被 SIGKILL 拦腰截断：图片下载/上传走到一半被切断，
+ *      浏览器拿到的是残缺文件（而不是一个明确的失败）。
+ *
+ * 3. 为什么**不用** Nest 的 `enableShutdownHooks()`：
+ *    它注册的 handler 只调用 `app.close()`，**不退出进程**。本项目还有 ioredis、
+ *    Prisma 引擎、MinIO 连接等句柄，只要有一个没随 app.close() 释放，进程就会一直
+ *    挂在事件循环上 —— 结果又回到「等满宽限期被 SIGKILL」，优雅关闭白做。
+ *    所以这里自己拿控制权：关闭完成后明确 exit(0)。
+ *
+ * 4. 硬上限的作用：若某个连接把 `app.close()` 卡住（例如一个还没传完的大文件），
+ *    到点强制退出，避免又退化成 SIGKILL。这也是上面 SHUTDOWN_TIMEOUT_MS 必须
+ *    远小于宽限期的原因。
+ */
+function installGracefulShutdown(app: INestApplication): void {
+  let shuttingDown = false;
+
+  const shutdown = async (signal: NodeJS.Signals) => {
+    if (shuttingDown) return; // 连按 Ctrl-C 不应触发第二次关闭流程
+    shuttingDown = true;
+    console.log(`收到 ${signal}：停止接收新连接，等待进行中的请求完成…`);
+
+    const forced = setTimeout(() => {
+      console.error(`优雅关闭超过 ${SHUTDOWN_TIMEOUT_MS}ms 仍未结束，强制退出`);
+      process.exit(0);
+    }, SHUTDOWN_TIMEOUT_MS);
+    forced.unref();
+
+    try {
+      // app.close() 会依次调用各模块的 onModuleDestroy（Prisma $disconnect、Redis quit），
+      // 并关闭 HTTP server：不再接受新连接，Node 20 起也会主动关闭空闲的 keep-alive 连接，
+      // 只等待真正还在传输的请求。
+      await app.close();
+      console.log('HTTP 服务与数据库/Redis 连接已关闭，正常退出');
+    } catch (err) {
+      console.error('关闭过程中出错（仍然退出）:', err instanceof Error ? err.message : err);
+    }
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+}
 
 async function bootstrap() {
   // --- 应用日志落盘 ---
@@ -126,6 +195,10 @@ async function bootstrap() {
   const port = parseInt(process.env.PORT || '3000', 10);
   await app.listen(port, '0.0.0.0');
   console.log(`奶龙 server running on http://0.0.0.0:${port}`);
+
+  // 监听 SIGTERM/SIGINT（`docker stop` / `docker compose up -d` 发出的就是 SIGTERM）。
+  // 必须在 app 起来之后注册：关闭流程要用到 app.close()。
+  installGracefulShutdown(app);
 }
 
 bootstrap();
