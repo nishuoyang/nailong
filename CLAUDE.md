@@ -47,11 +47,23 @@ npx prisma studio                 # 数据库可视化
 
 # 构建
 cd server && npm run build
-cd client && npm run build
+cd client && npm run build            # 含类型检查（推送前必须跑一次）
+
+# 类型检查（也含在 client 的 build 里，可单独跑）
+cd client && npm run typecheck
+cd client && npm run build:assets     # 只打包不检查 —— 镜像构建用的是这个
 
 # Docker（Redis + MinIO，不含数据库）
 docker compose up -d
 ```
+
+> ⚠️ **`client` 的「类型检查」与「打包」是分开的两件事。**
+> `server/Dockerfile` 的镜像构建只跑 `npm run build:assets`（即 `vite build`），**不跑** `vue-tsc -b`，
+> 所以**推送前必须在本地跑一次 `npm run build` 或 `npm run typecheck`**，否则类型错误不会被任何环节拦住。
+>
+> 这么分是因为在生产机上跑 `vue-tsc -b` 会拖垮整机：2026-09-11 实测它单独跑了 1016 秒未结束、
+> RSS 315MB，把 2 vCPU / 1.6GB 的机器压到 iowait 41%、load 44，**站点中断 18 分钟**。
+> 详见 `docs/性能优化记录-20260910.md` 第 12.10 节。
 
 ## 关键设计约定
 
