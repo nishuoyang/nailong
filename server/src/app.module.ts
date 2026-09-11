@@ -72,7 +72,28 @@ const staticImports = existsSync(clientDistPath)
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.register({ global: true, secret: process.env.JWT_SECRET || 'nailong-jwt-secret-dev-only' }),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    // --- 限流 ---
+    //
+    // 【配额口径，重要】ThrottlerGuard 的 generateKey 把「控制器名 + 处理器名 + IP」拼进 key，
+    // 所以配额是 **按单个接口、按 IP** 计数的，不是整个站点的总量。
+    // 首页会并发调 4 个不同接口，各算各的，不会互相消耗配额。
+    //
+    // 从 100 提到 600 的原因：国内运营商普遍做 NAT，一个公网 IP 背后可能是几十个真实用户，
+    // 「按 IP 计数」在共享出口下会叠加。按实名用户的行为（翻页 20-30 次/分钟）留 6 倍余量。
+    // 真正需要收紧的是登录/注册，用 @Throttle 在 AuthController 上单独覆盖（见那边注释）。
+    //
+    // 注意两个坑：
+    //  1. 必须用对象形式（{ throttlers: [...] }）而不是数组形式 ——
+    //     guard 的 getErrorMessage 只在 options 不是数组时才读 errorMessage，
+    //     用数组形式写 errorMessage 会被静默忽略，429 的 message 仍是
+    //     英文的 "ThrottlerException: Too Many Requests"。
+    //  2. 存储是内存实现（ThrottlerStorage 默认内存），配额按进程算。
+    //     当前只有单副本部署，够用；将来横向扩容需要换 Redis 存储，
+    //     否则实际额度会随副本数翻倍。
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 600 }],
+      errorMessage: '请求过于频繁，请稍后再试',
+    }),
     PrismaModule,
     RedisModule,
     MinioModule,

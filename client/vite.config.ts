@@ -56,12 +56,21 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
+      // 图片走同源代理，与生产完全一致：
+      // 数据库里存的是 /minio/{bucket}/{object} 这种同源相对路径，
+      // 若开发环境不代理 /minio，<img src="/minio/..."> 会打到 Vite 上变成 404。
+      // （早期开发库中存的是 http://localhost:9000 绝对地址，靠下面 CSP 的
+      //  img-src http://localhost:9000 直连 —— 那条路径在生产会变成混合内容，已弃用。）
+      '/minio': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
     },
     headers: {
       'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy':
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' http://localhost:9000 data: https:; connect-src 'self' http://localhost:3000; frame-src https://player.bilibili.com; frame-ancestors 'none';",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:3000; frame-src https://player.bilibili.com; frame-ancestors 'none';",
     },
   },
 })

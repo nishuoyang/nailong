@@ -1,4 +1,10 @@
-import { Injectable, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common'
+import {
+  Injectable,
+  ConflictException,
+  UnauthorizedException,
+  BadRequestException,
+  ServiceUnavailableException,
+} from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
 import * as bcrypt from 'bcrypt'
@@ -29,26 +35,26 @@ export class AuthService {
     })
 
     const sessionId = randomBytes(16).toString('hex')
-    // 存 Redis，5 分钟过期，不区分大小写
-    await this.redisService.client.set(
-      `captcha:${sessionId}`,
-      captcha.text.toLowerCase(),
-      'EX',
-      300,
-    )
+    // 存 Redis，5 分钟过期，不区分大小写。
+    // 这里必须检查写入结果：写失败还返回 SVG 的话，用户填对了也永远验证不过，
+    // 表现为「验证码错误或已过期」，无从排查。直接明确报服务不可用。
+    const stored = await this.redisService.set(`captcha:${sessionId}`, captcha.text.toLowerCase(), 300)
+    if (!stored) {
+      throw new ServiceUnavailableException('验证码服务暂不可用，请稍后重试')
+    }
 
     return { svg: captcha.data, sessionId }
   }
 
   async register(dto: RegisterDto) {
-    // 检查注册开关
-    const registrationOpen = await this.redisService.client.get('setting:registration')
+    // 检查注册开关（fail-open：Redis 取不到值时视为开放，见 RedisService.get 的注释）
+    const registrationOpen = await this.redisService.get('setting:registration')
     if (registrationOpen === 'false') {
       throw new BadRequestException('网站暂未开放注册')
     }
 
     // 验证码校验
-    const stored = await this.redisService.client.get(`captcha:${dto.captchaSessionId}`)
+    const stored = await this.redisService.get(`captcha:${dto.captchaSessionId}`)
     if (!stored || stored !== dto.captchaText.toLowerCase()) {
       throw new BadRequestException('验证码错误或已过期')
     }
@@ -72,7 +78,7 @@ export class AuthService {
     })
 
     // 注册成功后删除验证码，防止重复使用
-    await this.redisService.client.del(`captcha:${dto.captchaSessionId}`)
+    await this.redisService.del(`captcha:${dto.captchaSessionId}`)
 
     const tokens = await this.generateTokens(user.id, user.email, user.username, user.role)
     return {
@@ -99,7 +105,8 @@ export class AuthService {
     }
 
     // 登录限制：开启后仅管理员可登录
-    const loginRestricted = await this.redisService.client.get('setting:login_restricted')
+    // （fail-open：Redis 取不到值时视为未开启限制，缓存故障不应导致全站无法登录）
+    const loginRestricted = await this.redisService.get('setting:login_restricted')
     if (loginRestricted === 'true' && user.role !== 'admin') {
       throw new UnauthorizedException('网站暂未开放登录')
     }

@@ -6,6 +6,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import * as compression from 'compression';
 import { AppModule } from './app.module';
 import { MinioService } from './minio/minio.service';
+import { streamObjectFromMinio } from './common/http/stream-object';
 
 async function bootstrap() {
   // --- 生产环境校验 ---
@@ -87,17 +88,6 @@ async function bootstrap() {
   // 因此保留代理，改为消掉它自身的开销（见下面的 Content-Type 推断与 Range 处理）。
   const minioService = app.get(MinioService);
 
-  const MIME_BY_EXT: Record<string, string> = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-    gif: 'image/gif',
-    svg: 'image/svg+xml',
-    avif: 'image/avif',
-    bmp: 'image/bmp',
-  };
-
   app.use('/minio', async (req: Request, res: Response) => {
     try {
       // app.use('/minio') 挂载后 req.path 已剥离前缀（只剩 /{bucket}/{object}），
@@ -111,66 +101,8 @@ async function bootstrap() {
       const bucket = path.slice(0, slashIdx);
       const objectName = path.slice(slashIdx + 1);
 
-      // Content-Type 直接由扩展名推断：上传产物命名是受控的
-      // （{base}_thumb_sm.webp / {base}_thumb_md.webp / {base}.{jpg|png|webp}），
-      // 因此绝大多数请求不再需要为拿一个 Content-Type 而先向 MinIO 发 HEAD。
-      // 图片请求的 MinIO 往返由 2 次（HEAD + GET）降为 1 次（GET）。
-      const ext = objectName.split('.').pop()?.toLowerCase() ?? '';
-      let contentType: string | undefined = MIME_BY_EXT[ext];
-
-      const rangeHeader = req.headers.range as string | undefined;
-      let offset: number | undefined;
-      let length: number | undefined;
-      let totalSize: number | undefined;
-
-      // 只有两种情况仍需 HEAD：扩展名不认识（拿真实 Content-Type）或带 Range（要总长度算 Content-Range）。
-      // 普通 <img> 不会带 Range，所以常规图片请求不付这个成本。
-      if (!contentType || rangeHeader) {
-        try {
-          const stat = await minioService.statObject(bucket, objectName);
-          contentType ??= (stat.metaData?.['content-type'] as string) || undefined;
-          totalSize = stat.size;
-        } catch {
-          // 忽略：Content-Type 走兜底，Range 视为不生效（下面按整体返回 200）
-        }
-      }
-      contentType ??= 'application/octet-stream';
-
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      res.setHeader('Accept-Ranges', 'bytes');
-
-      if (rangeHeader && totalSize !== undefined) {
-        const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
-        if (m && (m[1] !== '' || m[2] !== '')) {
-          let start: number;
-          let end: number;
-          if (m[1] === '') {
-            // bytes=-N：最后 N 字节
-            const suffix = parseInt(m[2], 10);
-            start = Math.max(0, totalSize - suffix);
-            end = totalSize - 1;
-          } else {
-            start = parseInt(m[1], 10);
-            end = m[2] === '' ? totalSize - 1 : Math.min(parseInt(m[2], 10), totalSize - 1);
-          }
-
-          if (start > end || start >= totalSize) {
-            res.status(416).setHeader('Content-Range', `bytes */${totalSize}`);
-            res.end();
-            return;
-          }
-
-          offset = start;
-          length = end - start + 1;
-          res.status(206);
-          res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
-          res.setHeader('Content-Length', String(length));
-        }
-      }
-
-      const stream = await minioService.getObjectFromBucket(bucket, objectName, offset, length);
-      stream.pipe(res);
+      // Content-Type 推断与 Range 处理都在共享实现里（与 /api/images/:id/file 下载接口共用同一份）
+      await streamObjectFromMinio(req, res, minioService, { bucket, objectName });
     } catch (err: any) {
       if (err?.code === 'NoSuchKey' || err?.statusCode === 404) {
         res.status(404).end();

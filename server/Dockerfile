@@ -33,6 +33,10 @@ COPY --from=server-builder /app/prisma ./prisma
 COPY --from=server-builder /app/package*.json ./
 COPY --from=server-builder /app/entrypoint.sh ./
 COPY --from=server-builder /app/seed.js ./
+# 运维脚本（冒烟测试、存量数据修复）。放进镜像后可以直接在容器里跑，
+# 例如：docker exec nailong-server node scripts/backfill-object-meta.js --apply
+# 脚本会读挂载进来的 /app/.env，因此用的是与运行时完全一致的配置。
+COPY --from=server-builder /app/scripts ./scripts
 
 # 客户端产物（Docker 内构建，无需手动 npm run build）
 COPY --from=client-builder /app/dist ./client-dist

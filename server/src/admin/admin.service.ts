@@ -74,7 +74,7 @@ export class AdminService {
       data: { status: status as any },
     })
     // 状态变更时清除每日推荐缓存
-    await this.redisService.client.del('daily_recommendation')
+    await this.redisService.del('daily_recommendation')
     return updated
   }
 
@@ -151,7 +151,7 @@ export class AdminService {
 
     await this.prisma.image.delete({ where: { id } })
     // 删除时清除每日推荐缓存
-    await this.redisService.client.del('daily_recommendation')
+    await this.redisService.del('daily_recommendation')
     return { message: '删除成功' }
   }
 

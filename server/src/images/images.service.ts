@@ -180,7 +180,8 @@ export class ImagesService {
   // 每日推荐：从 approved 图片中随机选一张，Redis 缓存到次日 4 点
   async getDailyRecommendation() {
     const cacheKey = 'daily_recommendation'
-    const cached = await this.redisService.client.get(cacheKey)
+    // fail-open：Redis 不可用时 cached 为 null，直接走下面的实时查询，不影响接口可用性
+    const cached = await this.redisService.get(cacheKey)
     if (cached) return JSON.parse(cached)
 
     const count = await this.prisma.image.count({
@@ -212,7 +213,8 @@ export class ImagesService {
     next4am.setHours(4, 0, 0, 0)
     const ttl = Math.floor((next4am.getTime() - now.getTime()) / 1000)
 
-    await this.redisService.client.set(cacheKey, JSON.stringify(image), 'EX', ttl)
+    // 写缓存失败不影响返回结果（下次请求重算即可）
+    await this.redisService.set(cacheKey, JSON.stringify(image), ttl)
     return image
   }
 

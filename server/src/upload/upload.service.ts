@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common'
 import * as sharp from 'sharp'
 import { PrismaService } from '../prisma/prisma.service'
-import { MinioService } from '../minio/minio.service'
+import { MinioService, type ObjectMeta } from '../minio/minio.service'
 
 // 简易 HTML 标签去除
 function stripHtml(input: string): string {
@@ -85,16 +85,34 @@ export class UploadService {
     }
 
     // 上传到 MinIO
+    //
+    // 必须显式写入对象元数据：不传 meta 时 MinIO 会把对象存成 `binary/octet-stream`
+    // （线上 33 个存量对象全部如此）。虽然 main.ts 的 /minio 代理现在会按扩展名推断
+    // Content-Type 兜住浏览器侧，但**任何绕过代理的读取**（MinIO 控制台、将来接 CDN 回源、
+    // 预签名 URL 直连）拿到的都是错误的类型，所以要在数据源头修正。
+    //
+    // Cache-Control 用 immutable 一年：对象名内含随机串，内容永不覆盖，
+    // 与 main.ts 代理里设置的响应头保持一致。
+    const immutableCache = 'public, max-age=31536000, immutable'
+    const putMeta = (contentType: string): ObjectMeta => ({
+      'Content-Type': contentType,
+      'Cache-Control': immutableCache,
+    })
+
     const [smName, mdName, rawName] = [
       `${baseName}_thumb_sm.webp`,
       `${baseName}_thumb_md.webp`,
       `${baseName}.${ext}`,
     ]
 
+    // 原图用 sharp 探测出的**真实**格式对应的 MIME，而不是客户端声明的 file.mimetype
+    // （mimetype 是客户端可控的，前面已用 sharp 校验过真实格式）
+    const rawContentType = `image/${metadata.format === 'jpg' ? 'jpeg' : metadata.format}`
+
     await Promise.all([
-      this.minioService.putObject(smName, smBuffer),
-      this.minioService.putObject(mdName, mdBuffer),
-      this.minioService.putObject(rawName, file.buffer),
+      this.minioService.putObject(smName, smBuffer, putMeta('image/webp')),
+      this.minioService.putObject(mdName, mdBuffer, putMeta('image/webp')),
+      this.minioService.putObject(rawName, file.buffer, putMeta(rawContentType)),
     ])
 
     const baseUrl = this.minioService.baseUrl
