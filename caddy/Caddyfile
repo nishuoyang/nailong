@@ -11,12 +11,50 @@
 
 # ── 主域名 ──
 nailonghub.top {
+	# ── 访问日志 ──
+	#
+	# 加它的原因很具体：2026-09-11 发现生产少了两张图。靠 MinIO 桶目录的 mtime 能把删除
+	# 定位到 12:01:14 UTC，但**无法知道是谁删的** —— Caddy 默认不记 access log
+	# （整个日志 88 行、零请求行），应用日志又随容器重建丢了。这类问题以后要能几分钟内查清。
+	#
+	# 四个要点（每条都是踩过的）：
+	#   1. 必须删掉 Authorization / Cookie 再落盘。Caddy 默认的 JSON 访问日志**包含请求头**，
+	#      不删就等于把 JWT 明文写进磁盘文件。
+	#   2. **不能用全局的 log 块来开访问日志**：全局 log 配置的是「默认 logger」，
+	#      它只会把运行日志（含启动信息、502 错误）从 stderr 重定向到文件，
+	#      `docker logs nailong-caddy` 就再也看不到东西了 —— 而排查 502 正是靠它。
+	#      访问日志必须写在**每个 site 块**里。
+	#   3. 每个 site 写**各自的文件**。同一个文件挂两个 output 会让两个 writer 各自
+	#      按自己的字节数滚动、互相覆盖。
+	#   4. 写到 /data/logs（在 caddy_data 卷里）：容器重建后日志仍在，
+	#      而且不需要新增卷（新增卷必须重建容器）。
+	log {
+		output file /data/logs/access.log {
+			roll_size 10MiB
+			roll_keep 5
+			roll_keep_for 168h
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+			}
+		}
+	}
+
+	# 健康检查每 10 秒一次（外部可用性探针），记下来只会把日志淹掉
+	# 注意用的是 `log_skip`：旧名 `skip_log` 在 Caddy 2.11 里已被弃用（会打 WARN）
+	@health path /api/health
+	log_skip @health
+
 	reverse_proxy server:3000
 }
 
 # ── www 子域 ──
 # DNS 里 www 同样指向本机；301 到主域名避免重复内容（Caddy 会为它单独签发证书，
 # 否则访问 https://www.nailonghub.top 会报证书错误）
+# 纯跳转，不记日志 —— 它只是把流量交回主域名，主域名的日志才是真正有效的记录。
 www.nailonghub.top {
 	redir https://nailonghub.top{uri} permanent
 }
@@ -24,7 +62,27 @@ www.nailonghub.top {
 # ── 直接用公网 IP 访问 ──
 # 公网 IP 无法签发受信任证书，因此显式声明为 http:// 站点（Caddy 不会尝试 ACME），
 # 保持 IP 直连可用（CORS_ORIGINS 里也放行了 http://47.103.38.58）
+# 单独一个日志文件：与主域名分开，避免两个 writer 抢同一个文件。
 http://47.103.38.58 {
+	log {
+		output file /data/logs/access-ip.log {
+			roll_size 10MiB
+			roll_keep 3
+			roll_keep_for 168h
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+			}
+		}
+	}
+
+	# 同样用 `log_skip`（非弃用的名字），理由见上面主域名那段
+	@health path /api/health
+	log_skip @health
+
 	reverse_proxy server:3000
 }
 
