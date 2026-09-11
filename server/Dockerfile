@@ -36,8 +36,34 @@ RUN apt-get update \
 COPY server/package*.json ./
 RUN npm ci
 COPY server/ .
-RUN npx prisma generate
+RUN ./node_modules/.bin/prisma generate
 RUN npm run build
+
+# ── 丢掉 devDependencies ──
+# `npm ci` 装的是「完整依赖」，里面包含 @nestjs/cli、typescript、jest、ts-jest、
+# ts-loader、webpack、@angular-devkit 等一大堆只在构建期有用、运行期完全用不到的东西。
+# 生产机上实测：顶层包 518 个，其中**只有 239 个**属于运行期依赖树，
+# devDependencies 占了 279 个（typescript 23MB、@angular-devkit 25MB、@babel 12MB、
+# webpack 9MB、caniuse-lite 5MB、terser 3MB……）。
+#
+# `npm prune --omit=dev` 是**离线**操作：它只按 package.json/lock 修剪已装好的树，
+# 不重新下载任何东西。所以这一点减重不花构建时间 —— 这点很重要，因为本项目的
+# 构建耗时 88% 都花在装依赖的网络等待上（见 docs/）。
+#
+# 之所以不另起一个 `npm ci --omit=dev` 阶段：那会多一次完整下载（冷构建 +150 秒），
+# 而且会与 client-builder 的 npm ci 并发挤占只有 1.6GB 内存的生产机。
+#
+# ⚠️ 前置条件：`prisma` CLI 必须已在 dependencies 里（已从 devDependencies 移过来）。
+# 它被 entrypoint.sh 的 `prisma migrate deploy` 用到；若仍是 devDependency，
+# prune 会把它删掉，容器启动就会失败。
+RUN npm prune --omit=dev
+
+# prune 之后再生成一次 Prisma Client。这不是多余动作：
+# node_modules/.prisma/ 是 generate 生成的**非包目录**，npm prune 对它的处置
+# 属于实现细节而非契约，重新生成可以不管 prune 怎么处理它都得到正确结果。
+# 代价约 3 秒（实测），换掉一个「升级 npm 后容器起不来」的隐患，很划算。
+# 上面的 prune 保留了 prisma CLI，所以这一步不需要网络。
+RUN ./node_modules/.bin/prisma generate
 
 # ── 阶段 2：构建客户端 ──
 FROM apt-tuned AS client-builder
@@ -73,6 +99,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # 服务端产物
+# 注意 node_modules 来自上面**已 prune 过**的 server-builder（`npm prune --omit=dev`），
+# 不含 @nestjs/cli / typescript / jest 等构建期依赖。
 COPY --from=server-builder /app/dist ./dist
 COPY --from=server-builder /app/node_modules ./node_modules
 COPY --from=server-builder /app/prisma ./prisma
@@ -87,8 +115,32 @@ COPY --from=server-builder /app/scripts ./scripts
 # 客户端产物（Docker 内构建，无需手动 npm run build）
 COPY --from=client-builder /app/dist ./client-dist
 
+# 运行期依赖自检：把「prune 删多了」的失败现场从「容器起不来」提前到「构建失败」。
+# 放在运行阶段、在 COPY 之后，检验的正是最终真正发出去的那棵树。
+# 详见 server/scripts/check-runtime-deps.js 顶部的说明。
+RUN node scripts/check-runtime-deps.js
+
 RUN mkdir -p /app/data
 RUN chmod +x entrypoint.sh
 
 EXPOSE 3000
+
+# 健康检查。
+#
+# 只能用 node 的 fetch，不能用 curl/wget：node:20-slim 里**没有 wget**
+# （2026-09-11 排查构建问题时，我用 wget 探测镜像源可达性，四个源全部 FAIL，
+#   差点得出「容器没有外网」的错误结论 —— 真实原因是根本没有 wget）。
+# Node 20 自带全局 fetch，零依赖。
+#
+# 说清楚它**不做什么**：compose 里的 `restart: unless-stopped` 不会因为
+# unhealthy 而重启容器（那需要 swarm 模式或 autoheal 之类的看门狗）。
+# 所以这个健康检查的价值是**可观测性**：`docker ps` 直接显示 health 状态，
+# 发布后不必再手动 curl 才能确认服务真的起来了。
+#
+# start-period 给 60 秒：entrypoint 在启动服务前要先跑
+# `prisma migrate deploy` + `seed.js`，冷数据卷上这两步不是瞬间完成的。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 CMD ["./entrypoint.sh"]
+

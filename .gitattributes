@@ -1,0 +1,14 @@
+# 这个仓库的代码最终跑在 Linux 容器里，shell 脚本必须以 LF 落盘。
+#
+# 背景：Windows 上 `core.autocrlf=true`（本机就是）会在检出时把 LF 换成 CRLF。
+# 一旦 server/entrypoint.sh 以 CRLF 落盘，`docker build` 会把它原样复制进镜像，
+# 于是 shebang 变成 `#!/bin/sh\r` —— 内核会去找一个名为 `/bin/sh\r` 的解释器，
+# 以 ENOENT 失败，**容器直接起不来**。这个失败模式很难查：文件内容看起来完全正常，
+# 只有在 Linux 上 exec 才暴露。
+#
+# 用 eol=lf 明确钉死这几个文件，与开发机的 autocrlf 设置解耦。
+# 只钉部署关键文件，不做全局 `* text=auto eol=lf`，避免整仓重新规范化产生大 diff。
+
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf

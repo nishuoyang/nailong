@@ -1,0 +1,41 @@
+# ⚠️ 这个文件的位置很关键。
+#
+# compose 里构建上下文是仓库根目录（`context: .`），而 Docker 只从**上下文根目录**
+# 读取 `.dockerignore`。所以 `server/.dockerignore` 和 `client/.dockerignore`
+# 从来没有生效过 —— 它们一直是死配置（2026-09-11 发现）。
+#
+# 生产机上恰好没暴露问题：仓库里没有 node_modules / dist，整个上下文只有 9MB。
+# 但只要在本地跑一次 `docker build`，上下文就会带上两个 node_modules（500MB+），
+# 而且 `COPY client/ .` 会把 **Windows 版**的 node_modules 覆盖进构建阶段，
+# 直接毁掉镜像（.bin 全是 .cmd/.ps1，原生模块是 win32 二进制）。
+#
+# 体积只是次要问题，主要是正确性：构建上下文必须只含源码。
+
+# 依赖与产物 —— 一律在镜像内重新安装/构建
+**/node_modules
+**/dist
+
+# 版本库
+**/.git
+
+# 密钥与环境变量（server/.env 含 JWT_SECRET、MinIO 凭据，绝不能进任何镜像层）
+**/.env
+**/.env.*
+
+# SQLite 数据库：生产用 volume 挂载，镜像里只能是空的
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+
+# 文档与本地工具配置（docs/ 本身也已被 .gitignore 忽略）
+docs
+**/*.md
+.agents
+.claude
+.codex
+
+# 杂项
+**/__pycache__
+**/*.pyc
+**/.DS_Store
