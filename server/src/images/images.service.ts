@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common'
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { RedisService } from '../redis/redis.service'
 import { Prisma } from '@prisma/client'
@@ -12,9 +12,23 @@ function flattenCategories(image: any) {
   }
 }
 
+// 分页上界：100 万页（size ≤ 100 时 skip 最大 1e8，离 Prisma 的 64 位整数上界
+// 2^63-1 ≈ 9.2e18 还有 10 个数量级的余量，纯防御性）。
+//
+// 为什么必须有上界 —— 实测 `GET /api/images?page=99999999999999999999` 会打穿到
+// SQLite 层：`Number('…999')` 是 1e20（有限、>0，parsePage 原先放行），
+// `skip = (page-1)*size ≈ 2e21`，Prisma 引擎抛
+// `Unable to fit value 2e+21 into a 64-bit signed integer for field 'skip'` → 500，
+// 并被全局过滤器记一条 error 日志。
+// 超出业务上不可能到达的上界视为请求非法（400）—— 一个畸形参数不该触发 5xx 告警。
+const MAX_PAGE = 1_000_000
+
 // 安全解析分页参数，防止 NaN 和负数
 function parsePage(page?: number): number {
   const p = Number(page)
+  if (Number.isFinite(p) && p > MAX_PAGE) {
+    throw new BadRequestException(`page 超过最大允许值 ${MAX_PAGE}`)
+  }
   return Number.isFinite(p) && p > 0 ? Math.floor(p) : 1
 }
 function parseSize(size?: number): number {
