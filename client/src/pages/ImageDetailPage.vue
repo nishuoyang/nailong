@@ -10,6 +10,15 @@ const route = useRoute()
 const authStore = useAuthStore()
 const queryClient = useQueryClient()
 
+// 详情页按真实宽高比占位：md 缩略图只缩宽不裁剪，宽度受限时高度按比例预留，
+// 图片加载后下方信息区不再跳动（替代原先 min-h-[45vh] 的粗占位）。
+// 存量数据未回填宽高前退化为 min-h-[45vh] 兜底。
+const detailAspect = computed(() => {
+  const w = image.value?.width
+  const h = image.value?.height
+  return w && h ? `${w} / ${h}` : undefined
+})
+
 // 必须用 computed：/images/A → /images/B 会复用同一组件实例（router-view 没有 :key）。
 // 注意 setQueryData 不会像 useQuery 那样自动解包 ref，必须传 imageId.value，
 // 否则 queryKey 会变成 ['image', ComputedRef]，与缓存里的真实键不匹配。
@@ -88,11 +97,16 @@ function handleDownload() {
       <!-- Image -->
       <!-- 用 _thumb_md（800px）而不是原图（上传上限 10MB）做页内预览；
            原图仅通过「下载」按钮走 /api/images/:id/file 获取。
-           min-h 用于为图片预留高度，避免加载完成后把下方信息区推移（CLS）。 -->
-      <div class="bg-gray-900 flex items-center justify-center p-4 min-h-[45vh]">
+           宽高比已知时按比例预留（视频中心加载后不再推移下方信息区）；未知时
+           用 min-h-[45vh] 兜底。 -->
+      <div
+        class="bg-gray-900 flex items-center justify-center p-4"
+        :class="{ 'min-h-[45vh]': !detailAspect }"
+      >
         <img
           :src="image.thumbnailUrl || image.url"
           :alt="image.title"
+          :style="detailAspect ? { aspectRatio: detailAspect } : undefined"
           class="max-h-[70vh] max-w-full object-contain"
           decoding="async"
           fetchpriority="high"

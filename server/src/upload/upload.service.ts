@@ -74,12 +74,17 @@ export class UploadService {
     //     withoutEnlargement 避免比目标尺寸还小的图被放大。
     let smBuffer: Buffer
     let mdBuffer: Buffer
+    let mdMeta: sharp.Metadata
     try {
       const pipeline = sharp(file.buffer, { limitInputPixels: 50_000_000 }).rotate()
       ;[smBuffer, mdBuffer] = await Promise.all([
         pipeline.clone().resize(300, null, { withoutEnlargement: true }).webp({ quality: 78 }).toBuffer(),
         pipeline.clone().resize(800, null, { withoutEnlargement: true }).webp({ quality: 82 }).toBuffer(),
       ])
+      // 显示尺寸 = md 输出缓冲的实际像素（800 宽，withoutEnlargement 时可能是原始宽度）。
+      // 读「输出」而不是输入 metadata：输入的不带 .rotate() 的 EXIF 纠正（竖拍图宽高是反的），
+      // 读输出则与浏览器最终渲染的宽高比完全一致。见 schema 里 width/height 的语义注释。
+      mdMeta = await sharp(mdBuffer).metadata()
     } catch {
       throw new BadRequestException('图片处理失败，请确认文件未损坏')
     }
@@ -124,6 +129,8 @@ export class UploadService {
         url: `${baseUrl}/${rawName}`,
         thumbnailUrl: `${baseUrl}/${mdName}`,
         thumbnailSmUrl: `${baseUrl}/${smName}`,
+        width: mdMeta.width ?? null,
+        height: mdMeta.height ?? null,
         userId,
         status: 'pending',
         section: section === 'other' ? 'other' : 'general',

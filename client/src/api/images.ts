@@ -7,6 +7,9 @@ export interface ImageItem {
   url: string
   thumbnailUrl: string | null
   thumbnailSmUrl?: string | null
+  /** 显示尺寸（md 缩略图像素，见 schema 注释）。宽高比用于 aspect-ratio 占位，根治 CLS */
+  width?: number | null
+  height?: number | null
   userId: string
   status: string
   likeCount: number

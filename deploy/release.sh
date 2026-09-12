@@ -47,6 +47,12 @@ cd "$RELEASE_DIR"
 # overlay 不能处理三类变化：package.json、package-lock.json（node_modules）、
 # schema.prisma（Prisma Client）。对照基础镜像里的**实际文件**校验，
 # 而不是对 git 历史做假设 —— 万一基础镜像不是你以为的那个 commit，也能拦住。
+#
+# 自 2026-09-12（待办 #6 起）：schema.prisma 变更**不再是硬拦**。
+# overlay 的 release.Dockerfile 新增了离线 `prisma generate`（只吃 schema +
+# 已装引擎，实测 1.4 秒），容器启动时 entrypoint 还会 `prisma migrate deploy`
+# 自动应用迁移 —— 所以 schema-only 变更可以继续走 overlay，不必退回完整构建。
+# 但 package*.json 变化仍是硬拦：node_modules 里的原生二进制只有完整构建才动得了。
 if [ "${2:-}" != "--skip-guard" ]; then
   echo "==> guard：对照基础镜像 $BASE_IMAGE"
   # npm 版本差异过滤：本地 npm 会在 lock 里给 sharp 的平台包（@img/*-linux-*）
@@ -56,8 +62,9 @@ if [ "${2:-}" != "--skip-guard" ]; then
   # （它们没有这种块）。
   norm() { sed -E '/^[[:space:]]*"(libc|os|cpu)": \[/,/^[[:space:]]*\]/d'; }
 
+  # mode=fatal（默认）：不一致即中止；mode=warn：不一致只告警（见上面的 schema 说明）
   guard_eq() {
-    local uploaded="$1" image_path="$2" tmp_img tmp_up
+    local uploaded="$1" image_path="$2" mode="${3:-fatal}" tmp_img tmp_up
     tmp_img="$(mktemp)"; tmp_up="$(mktemp)"
     # 行尾归一化再比较：本地（Windows checkout）的 package*.json 可能是 CRLF，
     # 镜像里是构建时的 LF —— 逐字节比较会把「行尾差异」误判成依赖变化
@@ -69,17 +76,23 @@ if [ "${2:-}" != "--skip-guard" ]; then
     fi
     tr -d '\r' < "$uploaded" | norm > "$tmp_up"
     if ! cmp -s "$tmp_up" "$tmp_img"; then
-      echo "FATAL: $uploaded 与基础镜像里的 $image_path 内容不一致 ——" >&2
-      echo "      依赖或 Prisma schema 有变化，overlay 无法处理（原生二进制需要 npx ci/prisma generate）。" >&2
-      echo "      请改用完整构建：$COMPOSE_CMD -f $REPO/docker-compose.prod.yml build server" >&2
-      rm -f "$tmp_img" "$tmp_up"; exit 1
+      if [ "$mode" = "warn" ]; then
+        echo "WARN: $image_path 与基础镜像不一致 —— Prisma schema 变更。"
+        echo "      overlay 将重新生成 Prisma Client；容器启动时 entrypoint 会 migrate deploy。"
+      else
+        echo "FATAL: $uploaded 与基础镜像里的 $image_path 内容不一致 ——" >&2
+        echo "      依赖有变化，overlay 无法处理（原生二进制需要 npx ci）。" >&2
+        echo "      请改用完整构建：$COMPOSE_CMD -f $REPO/docker-compose.prod.yml build server" >&2
+        rm -f "$tmp_img" "$tmp_up"; exit 1
+      fi
+    else
+      echo "  OK: $image_path 一致（行尾已归一化）"
     fi
     rm -f "$tmp_img" "$tmp_up"
-    echo "  OK: $image_path 一致（行尾已归一化）"
   }
   guard_eq package.json /app/package.json
   guard_eq package-lock.json /app/package-lock.json
-  guard_eq prisma/schema.prisma /app/prisma/schema.prisma
+  guard_eq prisma/schema.prisma /app/prisma/schema.prisma warn
 else
   echo "==> --skip-guard：跳过依赖/schema 一致性检查（生产上不要这么干）"
 fi

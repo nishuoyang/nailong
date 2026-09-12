@@ -65,6 +65,13 @@ model Image {
   url            String
   thumbnailUrl   String?  @map("thumbnail_url")
   thumbnailSmUrl String?  @map("thumbnail_sm_url")
+  /// 显示尺寸（像素）。语义是「800px 缩略图（thumbnailUrl）的宽高」：
+  /// 上传时由 sharp 读 md 输出缓冲得到；存量数据由 scripts/backfill-image-dims.js 回填。
+  /// 宽高比与所展示图片一致（md 只缩宽、不裁剪），供前端 aspect-ratio 占位根治 CLS。
+  /// 注意**不是原图尺寸**：原图仅经 /file 代理下载，故意不参与视图加载（避免把
+  /// 多 MB 原图拉进视口），所以不需要也没有存储原图宽高。
+  width        Int?
+  height       Int?
   userId         String   @map("user_id")
   status         String   @default("pending")
   section        String   @default("general")
