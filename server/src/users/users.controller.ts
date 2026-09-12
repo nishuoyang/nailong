@@ -4,6 +4,7 @@ import { RolesGuard } from '../common/guards/roles.guard'
 import { Roles } from '../common/decorators/roles.decorator'
 import { Public } from '../common/decorators/public.decorator'
 import { CurrentUser } from '../common/decorators/current-user.decorator'
+import { PaginationDto } from '../common/dto/pagination.dto'
 import { UsersService } from './users.service'
 
 @Controller('users')
@@ -35,10 +36,9 @@ export class UsersController {
   @Get('me/images')
   async getMyImages(
     @CurrentUser() user: { id: string },
-    @Query('page') page?: number,
-    @Query('size') size?: number,
+    @Query() query: PaginationDto,
   ) {
-    return this.usersService.getMyImages(user.id, page, size)
+    return this.usersService.getMyImages(user.id, query.page, query.size)
   }
 
   // 管理员审核 bio
@@ -54,11 +54,10 @@ export class UsersController {
   @Roles('admin')
   @Get()
   async findAll(
-    @Query('page') page?: number,
-    @Query('size') size?: number,
+    @Query() query: PaginationDto,
     @Query('bioStatus') bioStatus?: string,
   ) {
-    return this.usersService.findAll(page, size, bioStatus)
+    return this.usersService.findAll(query.page, query.size, bioStatus)
   }
 
   // 管理员编辑用户
@@ -76,9 +75,8 @@ export class UsersController {
   @Get(':id/images')
   async getUserImages(
     @Param('id') id: string,
-    @Query('page') page?: number,
-    @Query('size') size?: number,
+    @Query() query: PaginationDto,
   ) {
-    return this.usersService.getUserImages(id, page, size)
+    return this.usersService.getUserImages(id, query.page, query.size)
   }
 }

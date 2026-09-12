@@ -2,6 +2,7 @@ import { Controller, Get, Param, Query, Req, Res, NotFoundException } from '@nes
 import { Request, Response } from 'express'
 import { CurrentUser } from '../common/decorators/current-user.decorator'
 import { Public } from '../common/decorators/public.decorator'
+import { PaginationDto } from '../common/dto/pagination.dto'
 import { MIME_BY_EXT, parseObjectRef, streamObjectFromMinio } from '../common/http/stream-object'
 import { ImagesService } from './images.service'
 import { MinioService } from '../minio/minio.service'
@@ -44,13 +45,12 @@ export class ImagesController {
   @Public()
   @Get('images')
   async findAll(
-    @Query('page') page?: number,
-    @Query('size') size?: number,
+    @Query() query: PaginationDto,
     @Query('category') category?: string,
     @Query('search') search?: string,
     @Query('sort') sort?: 'latest' | 'popular' | 'downloads',
   ) {
-    return this.imagesService.findAll({ page, size, category, search, sort })
+    return this.imagesService.findAll({ page: query.page, size: query.size, category, search, sort })
   }
 
   @Public()
@@ -95,20 +95,14 @@ export class ImagesController {
 
   @Public()
   @Get('other')
-  async getOther(
-    @Query('page') page?: number,
-    @Query('size') size?: number,
-  ) {
-    return this.imagesService.getOther({ page, size })
+  async getOther(@Query() query: PaginationDto) {
+    return this.imagesService.getOther({ page: query.page, size: query.size })
   }
 
   @Public()
   @Get('featured')
-  async getFeatured(
-    @Query('page') page?: number,
-    @Query('size') size?: number,
-  ) {
-    return this.imagesService.getFeatured({ page, size })
+  async getFeatured(@Query() query: PaginationDto) {
+    return this.imagesService.getFeatured({ page: query.page, size: query.size })
   }
 
   @Public()

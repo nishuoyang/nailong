@@ -51,10 +51,18 @@ const staticImports = existsSync(clientDistPath)
   ? [
       ServeStaticModule.forRoot({
         rootPath: clientDistPath,
-        // 排除 API 和 MinIO 代理路由，避免与后端接口冲突
-        // 注意：Express 4 内部使用 path-to-regexp@0.1.x，(.*) 编译成 (?:\.(.*)) 要求路径含点号，
-        // 必须用 * 通配符才能匹配无扩展名的路由（/featured、/admin 等）
-        exclude: ['/api/*', '/minio/*'],
+        // 排除 API、MinIO 代理与缺失的前端资源路由，避免与后端接口冲突 / 被 SPA 回退误吞。
+        // ⚠️ 通配语法是 path-to-regexp 3.x 的 `:path*`（本机 node_modules 实测版本 3.3.0）——
+        //    `/api/*` 这种老写法会编译成**字面量**正则（`/^\/api\/\*(?:\/)?$/`），
+        //    匹配的是路径字面 `api/*` 本身，等于 exclude 从未生效。
+        //    之前写 `/api/*`、`/minio/*` 没出事，只是因为 API 路由与 /minio 中间件在
+        //    Nest 层提前命中；被 SPA 回退吞掉的一直是「缺失的 /assets」这类路径。
+        // exclude 只作用于 SPA 回退（见 serve-static 的 express.loader.js：renderFn 先查
+        // isRouteExcluded，命中则 next()），express.static 仍在任何路径上先找真实文件 ——
+        // 所以加 /assets/:path* 后：存在的构建产物照常返回（带 immutable 缓存头），
+        // 缺失的 /assets/<不存在>.js 不再被回退成 200 + index.html（浏览器会把 HTML
+        // 当 JS 执行，报一堆诡异错误），而是正确 404。
+        exclude: ['/api/:path*', '/minio/:path*', '/assets/:path*'],
         // SPA 回退：Vue Router history 模式下，非文件请求返回 index.html
         // renderPath 必须是字符串（内部 validatePath 调用 charAt）；用 * 而非 (.*)
         renderPath: '*',

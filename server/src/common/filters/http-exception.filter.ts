@@ -8,6 +8,14 @@ import type { Request } from 'express'
  * 翻译成有意义的状态码与可读消息，并把 5xx 记录下来 ——
  * 之前这个过滤器不写任何日志，Prisma 的 SQLITE_BUSY / P2025 / P2003
  * 全都会被压成一个无从排查的 500。
+ *
+ * 【code 字段约定（与 ResponseInterceptor 的成功路径合起来看）】
+ * - 成功：`code: 0`（ResponseInterceptor 包装）；
+ * - 失败：`code: <HTTP 状态码>`（本过滤器包装，如 400/404/429/500）。
+ * 客户端一律按 HTTP 状态码 + message 判定与展示（request.ts 只处理 401 刷新，
+ * 各页面读 `err.response?.data?.message`），code 仅作为可读的业务镜像。
+ * 历史上「成功 0 / 失败 HTTP 状态」被称为不一致，但统一成一个固定负数或
+ * 成功也改成 200 都没有消费者受益，反而丢失状态信息；维持现状并在此注释固化约定。
  */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {

@@ -112,10 +112,6 @@ export class MinioService implements OnModuleInit {
     return this.client.removeObject(this.bucketName, objectName)
   }
 
-  async getObject(objectName: string) {
-    return this.client.getObject(this.bucketName, objectName)
-  }
-
   /**
    * 从指定 bucket 获取对象（MinIO 代理使用）
    *

@@ -1,6 +1,7 @@
 import { Controller, Get, Patch, Delete, Post, Put, Param, Body, Query, Req } from '@nestjs/common'
 import { RolesGuard } from '../common/guards/roles.guard'
 import { Roles } from '../common/decorators/roles.decorator'
+import { PaginationDto } from '../common/dto/pagination.dto'
 import { AdminService } from './admin.service'
 import { SettingsService } from '../settings/settings.service'
 
@@ -14,11 +15,10 @@ export class AdminController {
 
   @Get('images')
   async getImages(
-    @Query('page') page?: number,
-    @Query('size') size?: number,
+    @Query() query: PaginationDto,
     @Query('status') status?: string,
   ) {
-    return this.adminService.findAllImages({ page, size, status })
+    return this.adminService.findAllImages({ page: query.page, size: query.size, status })
   }
 
   @Patch('images/:id/status')
