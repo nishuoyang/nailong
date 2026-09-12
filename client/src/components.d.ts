@@ -31,6 +31,7 @@ declare module 'vue' {
     ElTabs: typeof import('element-plus/es')['ElTabs']
     ElTag: typeof import('element-plus/es')['ElTag']
     ElUpload: typeof import('element-plus/es')['ElUpload']
+    FeedbackDialog: typeof import('./components/layout/FeedbackDialog.vue')['default']
     ImageCard: typeof import('./components/common/ImageCard.vue')['default']
     ProfileLayout: typeof import('./components/layout/ProfileLayout.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
