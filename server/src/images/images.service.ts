@@ -1,4 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { RedisService } from '../redis/redis.service'
 import { Prisma } from '@prisma/client'
@@ -23,6 +30,16 @@ function flattenCategories(image: any) {
 // 超出业务上不可能到达的上界视为请求非法（400）—— 一个畸形参数不该触发 5xx 告警。
 const MAX_PAGE = 1_000_000
 
+// --- 视图计数（待办 #5，2026-09-11）---
+//
+// 此前每次详情页 GET 都在读接口里执行一次 SQLite 写事务（viewCount+1）——
+// WAL 解决了「写阻塞读」，但读请求仍要为一次真实写多付一次 RTT。
+// 现在改成：读时只 HINCRBY 一个 Redis 哈希（field = 图片 id，延迟 ~0.1ms、fire-and-forget），
+// 由 flushViewCounts 定时批量回写 SQLite；展示数 = SQLite 已落库值 + 哈希里的待回写增量。
+// Redis 不可用时 hincrby/hget/hgetall 全部 fail-open（静默不计数 / 按无增量处理），接口不受影响。
+const VIEW_COUNT_HASH = 'view:cnt'
+const VIEW_COUNT_FLUSH_MS = 30_000
+
 // 安全解析分页参数，防止 NaN 和负数
 function parsePage(page?: number): number {
   const p = Number(page)
@@ -37,11 +54,59 @@ function parseSize(size?: number): number {
 }
 
 @Injectable()
-export class ImagesService {
+export class ImagesService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(ImagesService.name)
+  private flushTimer: NodeJS.Timeout | null = null
+
   constructor(
     private prisma: PrismaService,
     private redisService: RedisService,
   ) {}
+
+  async onModuleInit() {
+    // unref：定时器不持有事件循环（即使进程无事可做也能正常退出）
+    this.flushTimer = setInterval(() => void this.flushViewCounts(), VIEW_COUNT_FLUSH_MS)
+    this.flushTimer.unref()
+  }
+
+  async onModuleDestroy() {
+    if (this.flushTimer) clearInterval(this.flushTimer)
+    // 最后一把：优雅关闭时把未回写的增量落库。
+    // 就算没跑到这里（SIGKILL），增量仍留在 Redis 哈希里，重启后首次 flush 会补上 ——
+    // 只有 Redis 容器自己重启才会丢，而视图本就是可丢失的分析数据。
+    await this.flushViewCounts()
+  }
+
+  /**
+   * 把 Redis 里的待回写视图增量批量写进 SQLite。
+   *
+   * 顺序必须是「先清哈希、再写库」（at-most-once）：
+   *   - 先 HDEL：崩溃在 UPDATE 之前最多丢掉这一批计数（视图丢了可接受）；
+   *   - 绝不先 UPDATE 再 HDEL —— 那会在两者之间崩溃时把同一批计数重复计入，
+   *     而视图数只增不减，一旦虚高就永远无法自愈。
+   * 清哈希之后新到达的 HINCRBY 落在新的哈希实例上，不会与这一批混淆。
+   */
+  private async flushViewCounts(): Promise<void> {
+    const deltas = await this.redisService.hgetall(VIEW_COUNT_HASH)
+    const entries = Object.entries(deltas)
+      .map(([id, raw]) => [id, Number(raw)] as const)
+      .filter(([, n]) => Number.isInteger(n) && n > 0)
+    if (entries.length === 0) return
+
+    await this.redisService.del(VIEW_COUNT_HASH)
+
+    for (const [id, n] of entries) {
+      // updateMany 匹配不到行（图片已被删除）也不抛错，静默跳过
+      await this.prisma.image.updateMany({
+        where: { id },
+        data: { viewCount: { increment: n } },
+      })
+    }
+
+    this.logger.log(
+      `视图计数回写 SQLite：${entries.length} 张图片，合计 ${entries.reduce((s, [, n]) => s + n, 0)} 次`,
+    )
+  }
 
   async findAll(params: {
     page?: number
@@ -118,11 +183,9 @@ export class ImagesService {
       }
     }
 
-    // 增加浏览次数
-    await this.prisma.image.update({
-      where: { id },
-      data: { viewCount: { increment: 1 } },
-    })
+    // 增加浏览次数：只写 Redis（fire-and-forget），由 flushViewCounts 每 30s 批量回写。
+    // 读接口不再执行写事务；Redis 不可用时静默放弃本次计数，接口不受影响。
+    await this.redisService.hincrby(VIEW_COUNT_HASH, id, 1)
 
     let isLiked = false
     if (userId) {
@@ -132,7 +195,11 @@ export class ImagesService {
       isLiked = !!like
     }
 
-    return flattenCategories({ ...image, isLiked })
+    // 展示数 = 已落库值 + 尚未回写的增量。回写完成（哈希被清）后增量自然归零，
+    // 长时间不刷新页面也不会看到虚高。
+    const pending = await this.redisService.hget(VIEW_COUNT_HASH, id)
+    const viewCount = image.viewCount + (pending ? Number(pending) : 0)
+    return flattenCategories({ ...image, viewCount, isLiked })
   }
 
   // 其他推荐：section='other' 的 approved 图片

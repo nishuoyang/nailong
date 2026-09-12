@@ -99,6 +99,44 @@ export class RedisService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * 哈希字段自增（fail-open）。视图计数用：读接口不再写 SQLite，
+   * 增量先进 Redis，由定时任务批量回写（见 ImagesService.flushViewCounts）。
+   * Redis 不可用时静默放弃本次计数，调用方无需感知。
+   */
+  async hincrby(key: string, field: string, increment: number): Promise<void> {
+    try {
+      await this.redis.hincrby(key, field, increment);
+    } catch (err) {
+      this.logErrorThrottled(err as Error);
+    }
+  }
+
+  /**
+   * 安全读整个哈希（fail-open）：视图增量表用。
+   * 与 get() 不同，这里的「空对象」在两种情况下语义一致 ——
+   * 键不存在 = 没有待回写增量，Redis 不可用同样按「没有增量」处理，
+   * 不存在把 Redis 缓存当唯一存储的歧义问题（DB 值才是来源，增量丢了能重建）。
+   */
+  async hgetall(key: string): Promise<Record<string, string>> {
+    try {
+      return await this.redis.hgetall(key);
+    } catch (err) {
+      this.logErrorThrottled(err as Error);
+      return {};
+    }
+  }
+
+  /** 安全读哈希字段：Redis 不可用时返回 null（调用方按「无增量」兜底） */
+  async hget(key: string, field: string): Promise<string | null> {
+    try {
+      return await this.redis.hget(key, field);
+    } catch (err) {
+      this.logErrorThrottled(err as Error);
+      return null;
+    }
+  }
+
   private logErrorThrottled(err: Error) {
     const now = Date.now();
     if (now - this.lastErrorLoggedAt < RedisService.ERROR_LOG_INTERVAL_MS) return;

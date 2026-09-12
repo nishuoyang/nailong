@@ -18,8 +18,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    * SQLite 运行参数调优。
    *
    * 背景：默认 journal_mode=delete 下，写事务会取得排他锁并阻塞所有读事务。
-   * 本项目的图片详情页每次 GET 都会执行 viewCount+1（写操作），因此并发访问时
-   * 读请求会被写请求阻塞。WAL 模式下读与写互不阻塞。
+   * 此前详情页每次 GET 都执行 viewCount+1（写操作），读请求会堵在写锁后面；
+   * 该写操作已于 2026-09-11 移出请求路径（Redis 累加 + 定时回写，见 ImagesService）。
+   * 但点赞/下载计数、上传入库与后台操作仍是写事务，WAL 照旧必要。
    *
    * 各 PRAGMA 的生效范围不同，这点很关键：
    *   - journal_mode 持久化在数据库文件头，设置一次即长期有效（重启后仍是 WAL）；
