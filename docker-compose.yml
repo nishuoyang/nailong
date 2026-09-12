@@ -1,28 +1,62 @@
-version: '3.8'
+# 开发环境依赖（Redis + MinIO）。生产拓扑见 docker-compose.prod.yml。
+#
+# 加固说明（待办 #7，2026-09-12，提交见 git log）：
+# - 「只绑 127.0.0.1」：本仓库的本地服务端跑在宿主机（node dist/src/main），经
+#   localhost 连 Redis/MinIO；端口绑回环后，局域网其他机器访问不到这两个
+#   无密码 / 默认凭据（minioadmin/minioadmin）的实例。生产不发布端口是另一回事，
+#   这里是「开发机上的最小暴露面」。
+# - MinIO 钉版本不用 latest：`RELEASE.2025-09-07T16-13-09Z` 是 2026-09-12 时 latest
+#   解析到的 tag（digest sha256:14cea493…），部署可复现；upgrade 是显式动作。
+# - Redis 配了 healthcheck（redis-cli ping）；MinIO **没有** —— 其镜像只有静态二进制
+#   + CA 证书，不带 curl / wget / shell / mc（2026-09-12 实测 `minio --help` 也只有
+#   server/gateway 两个子命令，无 healthcheck），无从自检；健康由服务端启动时的
+#   MinioService 初始化兜底（日志「图片 URL 前缀」「Bucket … set to public read」）。
+# - 资源上限（deploy.resources.limits，docker compose v2 直接生效）：防止失控的
+#   开发容器吃满整台机器（压测/重传大图时很容易）。
+# - 不写 `version:` 字段（Compose v2 已废弃，只产生告警）；显式 `name: nailong`
+#   固定项目名 —— 网络名由此稳定为 `nailong_default`（docs/verify-applog-docker.js
+#   依赖这个网络名；即使换目录名检出也不会变）。
+name: nailong
 
 services:
   redis:
     image: redis:7-alpine
     container_name: nailong-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: nailong-minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - miniodata:/data
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
 
 volumes:
   redisdata:
