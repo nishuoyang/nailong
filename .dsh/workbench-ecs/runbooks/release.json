@@ -1,0 +1,81 @@
+{
+  "name": "release",
+  "description": "奶龙发布跑书：产物上传 → 远端产物完整性核对 → 服务端仓库同步 → deploy/release.sh overlay 发布 → 健康与镜像核对 → 日志留档。前置：本机已跑 docs/build-release.ps1 生成 docs/release-<sha>.tar.gz，且该提交已推送到服务端能 fetch 的远端。脚本本体仍在仓库（deploy/release.sh），本文件只是步骤 + 断言 + 参数，不含任何逻辑。",
+  "params": {
+    "sha": "<sha>",
+    "repo": "/root/nailonghub",
+    "releases": "/root/releases"
+  },
+  "steps": [
+    {
+      "kind": "assert",
+      "description": "参数闸门：必须显式传入 sha",
+      "script": "if [ -z \"${sha}\" ] || [ \"${sha}\" = \"<sha>\" ]; then\n  echo '缺少参数 sha：先在本机跑 docs/build-release.ps1 生成产物，再用 runbook_params 传 sha=<7位短提交号>' >&2\n  exit 2\nfi\necho \"release-param-ok sha=${sha}\"",
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": ["release-param-ok"]
+      }
+    },
+    {
+      "kind": "upload",
+      "description": "上传本地产物 docs/release-${sha}.tar.gz → ${releases}/${sha}.tar.gz（上传后校验 sha256）",
+      "local_file": "docs/release-${sha}.tar.gz",
+      "remote_path": "${releases}/${sha}.tar.gz",
+      "force": true,
+      "verify_sha256": true
+    },
+    {
+      "kind": "assert",
+      "description": "远端产物完整性：条目数 ≥ 50 且关键切片齐备",
+      "script": "set -euo pipefail\nTARBALL=\"${releases}/${sha}.tar.gz\"\n[ -f \"$TARBALL\" ] || { echo \"artifact-missing $TARBALL\" >&2; exit 3; }\nN=$(tar -tzf \"$TARBALL\" | wc -l)\necho \"artifact-entries=$N\"\n[ \"$N\" -ge 50 ] || { echo \"artifact-too-thin entries=$N\" >&2; exit 4; }\nLIST=$(tar -tzf \"$TARBALL\")\nfor want in main.js index.html schema.prisma entrypoint.sh seed.js package-lock.json; do\n  echo \"$LIST\" | grep -q \"$want\" || { echo \"artifact-missing-member $want\" >&2; exit 5; }\ndone\necho artifact-members-ok",
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": ["artifact-members-ok"]
+      }
+    },
+    {
+      "kind": "exec",
+      "description": "服务端仓库同步到该提交（fetch + 只允许快进 merge，不留游离 HEAD）",
+      "timeout": 180,
+      "script": "set -euo pipefail\ngit -C \"${repo}\" fetch --all --prune\ngit -C \"${repo}\" cat-file -e \"${sha}^{commit}\"\necho \"server-commit=$(git -C \"${repo}\" log -1 --format=%h ${sha})\"\ngit -C \"${repo}\" merge --ff-only \"${sha}\"\necho \"repo-head=$(git -C \"${repo}\" rev-parse --short HEAD)\""
+    },
+    {
+      "kind": "assert",
+      "description": "核对服务端 HEAD 就是产物对应的提交",
+      "script": "set -euo pipefail\nA=$(git -C \"${repo}\" rev-parse HEAD)\nB=$(git -C \"${repo}\" rev-parse \"${sha}\")\n[ \"$A\" = \"$B\" ] || { echo \"repo-head-mismatch HEAD=$A want=$B\" >&2; exit 6; }\necho \"repo-head-ok ${sha}\"",
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": ["repo-head-ok"]
+      }
+    },
+    {
+      "kind": "exec",
+      "description": "执行 deploy/release.sh ${sha}（guard → 回滚快照 → overlay 构建 → 重建 server → 冒烟）",
+      "timeout": 300,
+      "script": "set -euo pipefail\nbash \"${repo}/deploy/release.sh\" \"${sha}\""
+    },
+    {
+      "kind": "assert",
+      "description": "容器内健康检查 /api/health",
+      "script": "docker exec nailong-server node -e \"fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(function(r){if(!r.ok){process.exit(1)}return r.text()}).then(function(t){console.log('health-ok '+t.slice(0,120))}).catch(function(){process.exit(1)})\"",
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": ["health-ok"]
+      }
+    },
+    {
+      "kind": "assert",
+      "description": "核对运行镜像与回滚快照 pre-${sha}",
+      "script": "set -euo pipefail\ndocker ps --filter name=nailong-server --format '{{.Image}}  {{.Status}}'\ndocker images nailonghub-server --format '{{.Repository}}:{{.Tag}}'",
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": ["nailonghub-server:latest", "nailonghub-server:pre-${sha}"]
+      }
+    },
+    {
+      "kind": "exec",
+      "description": "记录应用日志尾部（现场留档，失败不影响发布结论）",
+      "script": "tail -n 20 \"${repo}/logs/app.log\" 2>/dev/null || echo no-app-log"
+    }
+  ]
+}
