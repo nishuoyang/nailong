@@ -16,6 +16,9 @@ credentials.json
 # 环境变量（本地/服务器单独维护，不入库）
 .env
 .env.*
+# 例外：.env.production 是纯占位符模板（JWT 密钥等留空待填，不含真实密钥），
+# 随仓库分发供新环境 `cp .env.production server/.env` 使用。勿在此文件填入真实密钥！
+!.env.production
 
 # 开发用静态资源
 static/
