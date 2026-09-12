@@ -116,7 +116,7 @@ export class SettingsService implements OnModuleInit {
    * 热路径读取单个开关（注册/登录各一次）。
    *
    * 这里故意**不加 Redis 缓存**：省下的是一次 SQLite 主键查询（微秒级），
-   * 而同一条请求里的 bcrypt（cost 12，约 250ms）比它贵 4~5 个数量级。
+   * 而同一条请求里的 bcrypt（cost 11，约 100ms）比它贵 3~4 个数量级。
    * 缓存换不来可感知的收益，却会重新引入「缓存与数据库不一致」这一整类问题。
    * 顺带的好处：Redis 挂掉不再影响登录/注册的开关判断。
    */

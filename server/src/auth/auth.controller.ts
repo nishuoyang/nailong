@@ -7,7 +7,7 @@ import { LoginDto } from './dto/login.dto'
 
 // 全局配额是 600/分钟（按接口 × IP 计数，见 app.module.ts），对读接口合适，
 // 但对下面的写接口太松：
-//  - login/register 会跑 bcrypt（cost 12，单次约 250-350ms CPU），是唯一能被用来
+//  - login/register 会跑 bcrypt（cost 11，单次约 100-200ms CPU），是唯一能被用来
 //    打满 CPU 的公开接口；
 //  - register 还带验证码，本质是防脚本，配额给太松就没意义。
 // 因此这里用 @Throttle 覆盖 default 这一档的数值（名字不传时 guard 内部就叫 default）。

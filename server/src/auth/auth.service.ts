@@ -16,6 +16,16 @@ import { RegisterDto } from './dto/register.dto'
 import { LoginDto } from './dto/login.dto'
 import { randomBytes } from 'crypto'
 
+// 密码哈希强度（待办 #8，2026-09-12：cost 12 → 11）。
+// 本机实测 hash/compare：12 ≈ 203ms，11 ≈ 104ms（约 1.96 倍提速，仍高于 OWASP
+// 基准下限 10）。bcrypt 的 cost 是**每个哈希自带**的字段：降档只影响之后新建的
+// 哈希（注册 / 种子脚本），存量用户登录时 compare 仍按自己哈希里的 cost 跑，
+// 直到改密。注意 login 里防时序枚举的假哈希（LOGIN_DECOY_HASH）必须与真实 cost
+// 同步 —— 否则「用户不存在 (cost 12) vs 已注册 (cost 11)」的耗时差会把
+//「这个邮箱有没有注册」泄露出去。
+const BCRYPT_COST = 11
+const LOGIN_DECOY_HASH = '$2b$11$66KPuolmfVeW3c4Ya8Bl7eruyJ0YzRgwEkFtQ1zbW.AqZgT1wG7ry'
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -70,7 +80,7 @@ export class AuthService {
       throw new ConflictException('邮箱或用户名已被注册')
     }
 
-    const passwordHash = await bcrypt.hash(dto.password, 12)
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST)
     const user = await this.prisma.user.create({
       data: {
         username: dto.username,
@@ -100,7 +110,7 @@ export class AuthService {
       where: { email: dto.email },
     })
     // 防时序枚举：无论用户是否存在都执行 bcrypt
-    const hash = user?.passwordHash || '$2b$12$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const hash = user?.passwordHash || LOGIN_DECOY_HASH
     const valid = await bcrypt.compare(dto.password, hash)
     if (!user || !valid) {
       throw new UnauthorizedException('邮箱或密码错误')

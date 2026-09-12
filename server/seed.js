@@ -26,10 +26,13 @@ async function main() {
   console.log('Categories seeded')
 
   // 创建管理员（如不存在）
-  const adminEmail = 'admin@nailong.com'
+  // 密码哈希 cost 与 auth.service.ts 对齐（待办 #8：12 → 11）。
+// 种子只在账号不存在时创建，不会改写存量密码；新环境拿到的是一致的新 cost。
+const SEED_BCRYPT_COST = 11
+const adminEmail = 'admin@nailong.com'
   const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } })
   if (!existingAdmin) {
-    const passwordHash = await bcrypt.hash('admin123', 12)
+    const passwordHash = await bcrypt.hash('admin123', SEED_BCRYPT_COST)
     await prisma.user.create({
       data: {
         username: 'admin',
@@ -45,7 +48,7 @@ async function main() {
   const userEmail = 'user@nailong.com'
   const existingUser = await prisma.user.findUnique({ where: { email: userEmail } })
   if (!existingUser) {
-    const passwordHash = await bcrypt.hash('user123', 12)
+    const passwordHash = await bcrypt.hash('user123', SEED_BCRYPT_COST)
     await prisma.user.create({
       data: {
         username: 'testuser',
