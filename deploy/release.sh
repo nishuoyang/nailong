@@ -50,20 +50,25 @@ cd "$RELEASE_DIR"
 if [ "${2:-}" != "--skip-guard" ]; then
   echo "==> guard：对照基础镜像 $BASE_IMAGE"
   guard_eq() {
-    local uploaded="$1" image_path="$2" tmp
-    tmp="$(mktemp)"
-    if ! docker run --rm --entrypoint sh "$BASE_IMAGE" -c "cat '$image_path'" >"$tmp" 2>/dev/null; then
+    local uploaded="$1" image_path="$2" tmp_img tmp_up
+    tmp_img="$(mktemp)"; tmp_up="$(mktemp)"
+    # 行尾归一化再比较：本地（Windows checkout）的 package*.json 可能是 CRLF，
+    # 镜像里是构建时的 LF —— 逐字节比较会把「行尾差异」误判成依赖变化
+    # （2026-09-11 实测踩到：package.json 66 个 CR vs 镜像 0 个，guard 误报）。
+    # 删掉 \r 后比的是内容本身；真正的依赖变更不会被归一化掩盖。
+    if ! docker run --rm --entrypoint sh "$BASE_IMAGE" -c "cat '$image_path'" 2>/dev/null | tr -d '\r' > "$tmp_img"; then
       echo "FATAL: 无法从基础镜像读取 $image_path" >&2
-      rm -f "$tmp"; exit 1
+      rm -f "$tmp_img" "$tmp_up"; exit 1
     fi
-    if ! cmp -s "$tmp" "$uploaded"; then
-      echo "FATAL: $uploaded 与基础镜像里的 $image_path 不一致 ——" >&2
+    tr -d '\r' < "$uploaded" > "$tmp_up"
+    if ! cmp -s "$tmp_up" "$tmp_img"; then
+      echo "FATAL: $uploaded 与基础镜像里的 $image_path 内容不一致 ——" >&2
       echo "      依赖或 Prisma schema 有变化，overlay 无法处理（原生二进制需要 npx ci/prisma generate）。" >&2
       echo "      请改用完整构建：$COMPOSE_CMD -f $REPO/docker-compose.prod.yml build server" >&2
-      rm -f "$tmp"; exit 1
+      rm -f "$tmp_img" "$tmp_up"; exit 1
     fi
-    rm -f "$tmp"
-    echo "  OK: $image_path 一致"
+    rm -f "$tmp_img" "$tmp_up"
+    echo "  OK: $image_path 一致（行尾已归一化）"
   }
   guard_eq package.json /app/package.json
   guard_eq package-lock.json /app/package-lock.json
