@@ -8,9 +8,11 @@
  *  - 底图优先用站内的 800px 缩略图，秒开且省流量；需要更清晰时可切「原图」。
  *  - 预览与导出共用同一套布局函数（utils/memeCanvas.ts），所见即所得。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { getFeatured, getImageById, getImages, type ImageItem } from '@/api/images'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { getCategories, getFeatured, getImageById, getImages, type ImageItem } from '@/api/images'
+import { uploadImage } from '@/api/upload'
+import { useAuthStore } from '@/stores/auth'
 import {
   ASPECTS,
   FILTER_PRESETS,
@@ -48,6 +50,8 @@ import {
 // ────────────────────────────── 状态 ──────────────────────────────
 
 const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
 
 const spec = ref<MemeSpec>(createDefaultSpec())
 const baseImg = shallowRef<HTMLImageElement | null>(null)
@@ -965,6 +969,120 @@ watch(wallItems, () => {
   void nextTick().then(drawWall)
 })
 
+// ────────────────────────────── 投稿到站内 ──────────────────────────────
+
+/**
+ * 闭环：工坊做出来的图，走**既有**的上传接口进站内的审核流
+ * （POST /api/upload，jpeg/png/webp ≤ 10MB，落库为 pending，管理员通过后才公开）。
+ * 这里不新增任何后端能力，只把「做图」和「看图」接起来。
+ */
+const showSubmit = ref(false)
+const submitting = ref(false)
+const submitDone = ref(false)
+const submitPreview = ref('')
+const categories = ref<Array<{ id: string; name: string; slug: string }>>([])
+const submitForm = reactive({ title: '', description: '', categoryIds: [] as string[] })
+
+function defaultTitle(): string {
+  const first =
+    spec.value.texts.find((t) => t.role === 'free' && t.content.trim())?.content ||
+    spec.value.texts.find((t) => t.role === 'top' && t.content.trim())?.content ||
+    spec.value.texts.find((t) => t.role === 'bottom' && t.content.trim())?.content ||
+    ''
+  const line = first.split('\n')[0].trim().slice(0, 18)
+  return line ? `${line} · 表情包` : '我的奶龙表情包'
+}
+
+function defaultDescription(): string {
+  const from = baseMeta.value.origin === 'site' && baseMeta.value.label ? `，底图取自站内《${baseMeta.value.label}》` : ''
+  return `用奶龙表情包工坊做的${from}。工坊：https://nailonghub.top/studio`
+}
+
+async function loadCategories() {
+  if (categories.value.length) return
+  try {
+    const r = await getCategories()
+    categories.value = r.data.data ?? []
+  } catch {
+    categories.value = []
+  }
+}
+
+function openSubmit() {
+  if (!authStore.isLoggedIn) {
+    showToast('投稿需要先登录，正在跳转登录页…')
+    window.setTimeout(() => router.push('/adminpage'), 700)
+    return
+  }
+  submitDone.value = false
+  submitting.value = false
+  submitForm.title = defaultTitle()
+  submitForm.description = defaultDescription()
+  submitForm.categoryIds = []
+  const { W, H } = fit.value
+  submitPreview.value = renderToCanvas(spec.value, baseImg.value, W, H, 260 / W).toDataURL('image/jpeg', 0.72)
+  void loadCategories()
+  showSubmit.value = true
+}
+
+function toggleCategory(id: string) {
+  const i = submitForm.categoryIds.indexOf(id)
+  if (i >= 0) submitForm.categoryIds.splice(i, 1)
+  else submitForm.categoryIds.push(id)
+}
+
+/**
+ * 逐步降级地造出上传文件：2x PNG → 1x PNG → 1x JPEG。
+ * 站内接口上限 10MB，照片类底图在 2x PNG 下有可能顶到上限，所以必须有兜底。
+ */
+async function buildUploadFile(): Promise<File | null> {
+  const { W, H } = fit.value
+  const plan: Array<{ scale: number; type: string; quality?: number; ext: string }> = [
+    { scale: 2, type: 'image/png', ext: 'png' },
+    { scale: 1, type: 'image/png', ext: 'png' },
+    { scale: 1, type: 'image/jpeg', quality: 0.9, ext: 'jpg' },
+  ]
+  for (const p of plan) {
+    const canvas = renderToCanvas(spec.value, baseImg.value, W, H, p.scale)
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, p.type, p.quality))
+    if (blob && blob.size <= 9.5 * 1024 * 1024) {
+      return new File([blob], `nailong-meme-${Date.now()}.${p.ext}`, { type: p.type })
+    }
+  }
+  return null
+}
+
+async function submitWork() {
+  if (submitting.value) return
+  const title = submitForm.title.trim()
+  if (!title) {
+    showToast('先给这张图起个标题')
+    return
+  }
+  submitting.value = true
+  try {
+    const file = await buildUploadFile()
+    if (!file) {
+      showToast('这张图太大了，把导出倍率调到 1x 再试')
+      return
+    }
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('title', title)
+    const desc = submitForm.description.trim()
+    if (desc) fd.append('description', desc)
+    if (submitForm.categoryIds.length) fd.append('categoryIds', JSON.stringify(submitForm.categoryIds))
+    await uploadImage(fd)
+    submitDone.value = true
+    showToast('已投稿！管理员审核通过后就会出现在站内')
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    showToast(msg || '投稿失败，稍后再试')
+  } finally {
+    submitting.value = false
+  }
+}
+
 // ────────────────────────────── 杂项 ──────────────────────────────
 
 const filterState = computed(() => spec.value.filter)
@@ -993,6 +1111,7 @@ function setAspect(a: MemeAspect) {
         <button class="btn btn-ghost" @click="resetAll">↺ 重来</button>
         <button class="btn btn-ghost" :disabled="busy" @click="copyToClipboard">⧉ 复制</button>
         <button class="btn btn-ghost hidden sm:inline-flex" @click="share">↗ 分享</button>
+        <button class="btn btn-ghost" title="投稿到站内图库，管理员审核通过后公开" @click="openSubmit">📮 投稿到站内</button>
         <button class="btn btn-primary" :disabled="busy" @click="download">⬇ 下载 PNG</button>
       </div>
     </header>
@@ -1321,6 +1440,75 @@ function setAspect(a: MemeAspect) {
 
     <Transition name="toast">
       <div v-if="toast" class="studio-toast">{{ toast }}</div>
+    </Transition>
+
+    <!-- 投稿弹窗：不引 Element Plus（工坊是一块独立的暗色工作台），所以自己画一个 -->
+    <Transition name="toast">
+      <div v-if="showSubmit" class="submit-mask" @click.self="showSubmit = false">
+        <div class="submit-panel" role="dialog" aria-modal="true" aria-label="投稿到站内">
+          <div class="submit-head">
+            <span class="submit-title">📮 投稿到站内图库</span>
+            <button class="btn btn-ghost btn-xs" @click="showSubmit = false">✕</button>
+          </div>
+
+          <template v-if="!submitDone">
+            <div class="submit-body">
+              <img v-if="submitPreview" :src="submitPreview" class="submit-preview" alt="投稿预览" />
+              <div class="submit-fields">
+                <label class="submit-label">标题</label>
+                <input v-model="submitForm.title" class="copy-input" maxlength="255" placeholder="给这张图起个名字" />
+
+                <label class="submit-label">描述</label>
+                <textarea
+                  v-model="submitForm.description"
+                  class="copy-input"
+                  rows="3"
+                  maxlength="500"
+                  placeholder="说明一下这张图（可留空）"
+                />
+
+                <label class="submit-label">分类<span class="submit-hint">（可多选，也可以不选）</span></label>
+                <div v-if="categories.length" class="mood-row">
+                  <button
+                    v-for="c in categories"
+                    :key="c.id"
+                    :class="['chip', submitForm.categoryIds.includes(c.id) ? 'chip-on' : '']"
+                    @click="toggleCategory(c.id)"
+                  >
+                    {{ c.name }}
+                  </button>
+                </div>
+                <p v-else class="rail-note">分类加载中…</p>
+
+                <p class="submit-note">
+                  投稿会进入站内的<b>审核队列</b>（状态为待审核），管理员通过后才对所有人可见。
+                  图片会以 {{ exportScale }}x 分辨率提交。
+                </p>
+              </div>
+            </div>
+            <div class="submit-foot">
+              <button class="btn btn-ghost" @click="showSubmit = false">先不投</button>
+              <button class="btn btn-primary" :disabled="submitting" @click="submitWork">
+                {{ submitting ? '投稿中…' : '确认投稿' }}
+              </button>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="submit-body submit-done">
+              <div class="submit-done-emoji">🎉</div>
+              <p class="submit-done-text">
+                投稿成功，已经在审核队列里了。<br />
+                管理员通过后，它就会出现在站内图库里。
+              </p>
+              <div class="submit-foot">
+                <button class="btn btn-ghost" @click="showSubmit = false">继续做图</button>
+                <button class="btn btn-primary" @click="router.push('/profile')">去我的主页看看</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
     </Transition>
 
     <!-- 灵感墙：8 个配方 × 站内图，由引擎当场画出来 -->
@@ -2053,6 +2241,101 @@ function setAspect(a: MemeAspect) {
 }
 .recipe-name {
   font-weight: 600;
+}
+
+/* ── 投稿弹窗 ── */
+.submit-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(4px);
+}
+.submit-panel {
+  width: min(720px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: linear-gradient(180deg, #141d33, #0b1020);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.6);
+  padding: 1rem 1.1rem 1.1rem;
+  color: var(--text);
+}
+.submit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px dashed var(--line);
+}
+.submit-title {
+  font-weight: 800;
+  font-size: 1rem;
+}
+.submit-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  padding: 0.9rem 0 0.2rem;
+}
+@media (min-width: 640px) {
+  .submit-body:not(.submit-done) {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+}
+.submit-preview {
+  width: 100%;
+  height: auto;
+  border-radius: 0.6rem;
+  border: 1px solid var(--line);
+  align-self: start;
+}
+.submit-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.submit-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 0.35rem;
+}
+.submit-hint {
+  opacity: 0.7;
+}
+.submit-note {
+  margin: 0.7rem 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.submit-note b {
+  color: var(--accent);
+}
+.submit-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding-top: 0.9rem;
+}
+.submit-done {
+  text-align: center;
+}
+.submit-done-emoji {
+  font-size: 2.6rem;
+}
+.submit-done-text {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.9;
+}
+.submit-done .submit-foot {
+  justify-content: center;
 }
 
 /* ── 灵感墙 ── */
