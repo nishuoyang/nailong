@@ -15,6 +15,12 @@ const router = createRouter({
       component: () => import('@/pages/StoryPage.vue'),
     },
     {
+      // 表情包工坊：纯前端 canvas 工具，路由级懒加载，不占首屏体积
+      path: '/studio',
+      name: 'studio',
+      component: () => import('@/pages/StudioPage.vue'),
+    },
+    {
       path: '/images/:id',
       name: 'image-detail',
       component: () => import('@/pages/ImageDetailPage.vue'),

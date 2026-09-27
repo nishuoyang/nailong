@@ -76,10 +76,24 @@ function handleLogout() {
               :class="isDark ? 'text-gray-300' : 'text-gray-600'">
               奶蛙史
             </router-link>
+            <router-link
+              to="/studio"
+              class="no-underline transition-all px-2.5 py-1 rounded-full text-sm font-semibold bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950 hover:shadow-md hover:scale-105"
+              title="表情包工坊：拖拽成图，三秒出片"
+            >
+              ✨ 表情包工坊
+            </router-link>
           </nav>
         </div>
 
         <div class="flex items-center gap-4">
+          <!-- 移动端也能一眼看到工坊入口（桌面端走上面的导航，避免重复） -->
+          <router-link
+            to="/studio"
+            class="md:hidden no-underline px-2 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950"
+          >
+            ✨ 工坊
+          </router-link>
           <template v-if="authStore.isLoggedIn">
             <router-link to="/upload" class="text-sm hover:text-blue-600 no-underline transition-colors"
               :class="isDark ? 'text-gray-300' : 'text-gray-600'">

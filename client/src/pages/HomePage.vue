@@ -157,6 +157,22 @@ function handleSortChange(s: 'latest' | 'popular' | 'downloads') {
         <p class="text-gray-500 text-lg">发现、分享精彩图片</p>
       </div>
 
+      <!-- 工坊入口：把「看图」变成「用图」，顺手给新功能一个首屏位置 -->
+      <router-link to="/studio" class="block max-w-xl mx-auto mb-8 no-underline">
+        <div
+          class="relative overflow-hidden rounded-2xl px-5 py-4 flex items-center gap-4 bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950 shadow-md hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200"
+        >
+          <span class="text-3xl shrink-0">🐉</span>
+          <div class="min-w-0 flex-1">
+            <p class="font-bold text-base leading-tight">表情包工坊 · 新上线</p>
+            <p class="text-xs opacity-80 mt-0.5">
+              挑一张站内图，拖两行字，三秒做成表情包 —— 全程在你自己浏览器里完成
+            </p>
+          </div>
+          <span class="text-sm font-bold whitespace-nowrap shrink-0">去做一张 →</span>
+        </div>
+      </router-link>
+
       <!-- Search -->
       <div class="max-w-xl mx-auto mb-8">
         <el-input
