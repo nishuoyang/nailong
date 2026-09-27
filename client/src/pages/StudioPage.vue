@@ -34,11 +34,13 @@ import {
 } from '@/utils/memeCanvas'
 import {
   HINTS,
+  MEME_RECIPES,
   MOODS,
   STICKER_GROUPS,
   randomCopy,
   randomSticker,
   type MemeMood,
+  type MemeRecipe,
 } from '@/data/memeCopy'
 
 // ────────────────────────────── 状态 ──────────────────────────────
@@ -123,6 +125,20 @@ function render() {
 watch(spec, scheduleRender, { deep: true })
 watch([fit, selected], scheduleRender)
 
+// 草稿自动保存：改动停下 900ms 后落盘一次，避免拖动过程中疯狂写 localStorage
+watch(
+  spec,
+  () => {
+    if (draftTimer) window.clearTimeout(draftTimer)
+    draftTimer = window.setTimeout(saveDraft, 900)
+  },
+  { deep: true },
+)
+watch(baseMeta, () => {
+  if (draftTimer) window.clearTimeout(draftTimer)
+  draftTimer = window.setTimeout(saveDraft, 900)
+})
+
 // ────────────────────────────── 尺寸自适应 ──────────────────────────────
 
 let ro: ResizeObserver | null = null
@@ -153,12 +169,16 @@ onMounted(async () => {
     } catch {
       showToast('那张图没能加载，先从图库挑一张吧')
     }
-  }
-  // 首屏别给一块空画布：图库一到位就自动铺一张最新图，进来就是一个「已成图」的状态
-  if (!baseImg.value && gallery.value.length) {
-    const first = gallery.value[0]
-    lastPicked.value = first
-    loadBase(picFrom(first), first.title || '站内图片', 'site')
+  } else {
+    // 没有深链时，先把上次没做完的草稿接回来（刷新不丢）
+    const draftState = loadDraft()
+    if (draftState !== 'none') showToast('已接回上次没做完的草稿 —— 想清空点「重来」')
+    // 首屏别给一块空画布：图库一到位就自动铺一张最新图，进来就是一个「已成图」的状态
+    if (draftState !== 'base' && !baseImg.value && gallery.value.length) {
+      const first = gallery.value[0]
+      lastPicked.value = first
+      loadBase(picFrom(first), first.title || '站内图片', 'site')
+    }
   }
   window.addEventListener('keydown', onKeydown)
   await nextTick()
@@ -173,12 +193,66 @@ onBeforeUnmount(() => {
 })
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') selected.value = null
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selected.value?.kind === 'sticker') {
-    const target = e.target as HTMLElement | null
-    if (target && /INPUT|TEXTAREA/.test(target.tagName)) return
+  const target = e.target as HTMLElement | null
+  const typing =
+    !!target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)
+
+  if (e.key === 'Escape') {
+    selected.value = null
+    return
+  }
+  if (typing) return
+
+  const mod = e.ctrlKey || e.metaKey
+
+  if (mod && (e.key === 's' || e.key === 'S')) {
     e.preventDefault()
-    removeSticker(selected.value.id)
+    void download()
+    return
+  }
+  if (mod && (e.key === 'd' || e.key === 'D')) {
+    e.preventDefault()
+    randomize()
+    return
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selected.value) {
+    e.preventDefault()
+    if (selected.value.kind === 'sticker') removeSticker(selected.value.id)
+    return
+  }
+  // 1~7 直接切版式（顺序与右侧版式列表一致）
+  if (/^[1-9]$/.test(e.key)) {
+    const tpl = TEMPLATES[Number(e.key) - 1]
+    if (tpl) {
+      e.preventDefault()
+      selectTemplate(tpl.key)
+    }
+    return
+  }
+  // 方向键微调选中项，按住 Shift 走大步
+  if (e.key.startsWith('Arrow') && selected.value) {
+    e.preventDefault()
+    nudge(e.key, e.shiftKey ? 0.03 : 0.006)
+  }
+}
+
+/** 方向键微调：选中文字块或贴纸时按 0.6%（Shift 3%）步长挪动 */
+function nudge(key: string, step: number) {
+  const sel = selected.value
+  if (!sel) return
+  const dx = key === 'ArrowLeft' ? -step : key === 'ArrowRight' ? step : 0
+  const dy = key === 'ArrowUp' ? -step : key === 'ArrowDown' ? step : 0
+  if (sel.kind === 'text') {
+    const t = spec.value.texts.find((x) => x.id === sel.id)
+    if (!t) return
+    const layout = layoutRef.value?.texts.find((x) => x.block.id === sel.id)
+    t.x = clamp((t.x ?? (layout ? layout.cx / fit.value.W : 0.5)) + dx, 0, 1)
+    t.y = clamp((t.y ?? (layout ? layout.cy / fit.value.H : 0.5)) + dy, 0, 1)
+  } else {
+    const s = spec.value.stickers.find((x) => x.id === sel.id)
+    if (!s) return
+    s.x = clamp(s.x + dx, 0, 1)
+    s.y = clamp(s.y + dy, 0, 1)
   }
 }
 
@@ -219,6 +293,105 @@ watch(useOriginal, () => {
 })
 
 const fileInput = ref<HTMLInputElement | null>(null)
+
+// ────────────────────────────── 一键出片（配方） ──────────────────────────────
+
+/**
+ * 配方 = 版式 + 比例 + 滤镜 + 文案 + 贴纸位置，一次全给你。
+ * 对没耐心排版的人（大多数人）来说，这一排按钮才是这个工具的入口。
+ */
+function applyRecipe(r: MemeRecipe) {
+  let next = applyTemplate(spec.value, r.template)
+  next = {
+    ...next,
+    aspect: r.aspect,
+    filter: { preset: r.filter, brightness: 1, contrast: 1, saturate: 1 },
+    texts: next.texts.map((t) => ({ ...t, content: r.texts[t.role] ?? t.content })),
+    stickers: (r.stickers ?? []).map((s) => ({
+      id: uid('s'),
+      emoji: s.emoji,
+      x: s.x,
+      y: s.y,
+      size: s.size,
+      rotation: 0,
+    })),
+  }
+  spec.value = next
+  selected.value = null
+  rollHint()
+  showToast(`配方已套用：${r.name} —— 直接下载，或者接着改`)
+}
+
+// ────────────────────────────── 草稿自动保存 ──────────────────────────────
+
+/**
+ * 刷新不丢正在做的图。
+ * 底图分两种存法：站内图存 URL（重新加载像素完全一致），本地图片才存缩略版 data URL
+ * （原文件在浏览器里拿不到第二次）。
+ */
+const DRAFT_KEY = 'nailong.studio.draft.v1'
+let draftTimer: number | undefined
+
+interface StudioDraft {
+  spec: MemeSpec
+  baseUrl?: string
+  baseData?: string
+  label?: string
+  origin?: 'site' | 'local'
+  savedAt: number
+}
+
+function saveDraft() {
+  try {
+    const draft: StudioDraft = {
+      spec: JSON.parse(JSON.stringify(spec.value)) as MemeSpec,
+      savedAt: Date.now(),
+    }
+    const last = lastPicked.value
+    if (baseMeta.value.origin === 'site' && last) {
+      draft.baseUrl = picFrom(last)
+      draft.label = baseMeta.value.label
+      draft.origin = 'site'
+    } else if (baseImg.value) {
+      draft.baseData = downscale(baseImg.value, 1000)
+      draft.label = baseMeta.value.label
+      draft.origin = 'local'
+    }
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+  } catch {
+    /* 空间不够就放弃草稿，绝不能影响正在做的事 */
+  }
+}
+
+function clearDraft() {
+  try {
+    localStorage.removeItem(DRAFT_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 返回值告诉调用方恢复到了什么程度（决定要不要再自动铺一张图库最新图） */
+function loadDraft(): 'none' | 'spec' | 'base' {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY)
+    if (!raw) return 'none'
+    const d = JSON.parse(raw) as StudioDraft
+    if (!d?.spec || !Array.isArray(d.spec.texts)) return 'none'
+    spec.value = d.spec
+    if (d.baseUrl) {
+      loadBase(d.baseUrl, d.label || '草稿底图', 'site')
+      return 'base'
+    }
+    if (d.baseData) {
+      loadBase(d.baseData, d.label || '草稿底图', 'local')
+      return 'base'
+    }
+    return 'spec'
+  } catch {
+    return 'none'
+  }
+}
 
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
@@ -696,6 +869,8 @@ function resetAll() {
   selected.value = null
   baseImg.value = null
   baseMeta.value = { label: '还没有选底图', w: 0, h: 0, origin: 'none' }
+  lastPicked.value = null
+  clearDraft()
   showToast('已清空，重新来一张')
 }
 
@@ -829,6 +1004,23 @@ function setAspect(a: MemeAspect) {
             @pointerup="onPointerUp"
             @pointercancel="onPointerUp"
           />
+        </div>
+
+        <!-- 一键出片：配方是人工调好的成品，点一下就是一张可以直接发出去的图 -->
+        <div class="recipe-strip">
+          <span class="recipe-lead">一键出片</span>
+          <div class="recipe-scroll">
+            <button
+              v-for="r in MEME_RECIPES"
+              :key="r.id"
+              class="recipe-btn"
+              :title="r.desc"
+              @click="applyRecipe(r)"
+            >
+              <span class="recipe-emoji">{{ r.emoji }}</span>
+              <span class="recipe-name">{{ r.name }}</span>
+            </button>
+          </div>
         </div>
 
         <div class="stage-foot">
@@ -1001,8 +1193,10 @@ function setAspect(a: MemeAspect) {
           <ul class="tips">
             <li>直接<b>拖</b>画布上的文字和贴纸</li>
             <li>点一下就能选中，右侧出现细调面板</li>
-            <li>按 <kbd>Esc</kbd> 取消选中，<kbd>Delete</kbd> 删贴纸</li>
-            <li>版式换来换去，写好的字不会丢</li>
+            <li><kbd>1</kbd>~<kbd>7</kbd> 换版式，<kbd>Ctrl</kbd>+<kbd>S</kbd> 下载，<kbd>Ctrl</kbd>+<kbd>D</kbd> 灵感</li>
+            <li>选中后<b>方向键</b>微调（按住 <kbd>Shift</kbd> 走大步）</li>
+            <li><kbd>Esc</kbd> 取消选中，<kbd>Delete</kbd> 删贴纸</li>
+            <li>版式换来换去，写好的字不会丢；刷新也能接着改</li>
           </ul>
         </div>
       </aside>
@@ -1664,6 +1858,55 @@ function setAspect(a: MemeAspect) {
   padding: 0 0.25rem;
   font-size: 0.68rem;
   color: var(--text);
+}
+
+/* ── 一键出片配方条 ── */
+.recipe-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.1rem;
+}
+.recipe-lead {
+  flex: none;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  writing-mode: horizontal-tb;
+}
+.recipe-scroll {
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+  scrollbar-width: thin;
+}
+.recipe-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text);
+  font-size: 0.74rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.recipe-btn:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  background: rgba(250, 204, 21, 0.12);
+}
+.recipe-emoji {
+  font-size: 0.9rem;
+}
+.recipe-name {
+  font-weight: 600;
 }
 
 /* ── 提示条 ── */

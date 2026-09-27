@@ -7,6 +7,7 @@
  * 3. 全部文案为原创/通用网络口语，不涉及具体真人与敏感话题，适合公开展示的站点氛围。
  * 4. `lore` 组绑定站内已有的「奶龙 / 奶蛙」文化梗（见 /story 专题页），让工具和站点内容互相呼应。
  */
+import type { MemeAspect, MemeTemplate } from '@/utils/memeCanvas'
 
 export type MemeMood = 'abstract' | 'midnight' | 'work' | 'food' | 'social' | 'lore' | 'cute'
 
@@ -136,4 +137,114 @@ export const HINTS: string[] = [
   '滤镜选「胶片」，谁用谁知道',
   '字号拉到最大，梗的分量就上来了',
   '左边图库点一下就能换底图，别客气',
+  '按 1~7 直接换版式，Ctrl+S 直接下载',
 ]
+
+/**
+ * 梗图配方 —— 「一键出片」
+ *
+ * 和「随机灵感」的区别：这里是**人工调好的成品配方**，版式、比例、滤镜、文案、
+ * 贴纸位置都是配好的，点一下就是一张可以直接发出去的图。
+ * 这也是这个工具最讨喜的地方：用户不需要先学会怎么排版，先出片，再改。
+ */
+export interface MemeRecipe {
+  id: string
+  name: string
+  emoji: string
+  /** 一句话说明这张图会成为什么样子 */
+  desc: string
+  template: MemeTemplate
+  aspect: MemeAspect
+  /** 滤镜预设 key，见 utils/memeCanvas.ts 的 FILTER_PRESETS */
+  filter: string
+  texts: Partial<Record<'top' | 'bottom' | 'free', string>>
+  stickers?: Array<{ emoji: string; x: number; y: number; size: number }>
+}
+
+export const MEME_RECIPES: MemeRecipe[] = [
+  {
+    id: 'abstract-god',
+    name: '抽象成神',
+    emoji: '🌀',
+    desc: '大字报 + 一句话糊满画面，音量拉满',
+    template: 'poster',
+    aspect: '4:5',
+    filter: 'punch',
+    texts: { free: '我已抽象', bottom: '不要试图理解我' },
+    stickers: [{ emoji: '🌀', x: 0.82, y: 0.22, size: 150 }],
+  },
+  {
+    id: 'laugh',
+    name: '捧腹大笑',
+    emoji: '😂',
+    desc: '拍立得相纸 + 落款，像一张洗出来的照片',
+    template: 'polaroid',
+    aspect: '4:5',
+    filter: 'film',
+    texts: { bottom: '笑到打鸣' },
+    stickers: [{ emoji: '😂', x: 0.78, y: 0.66, size: 170 }],
+  },
+  {
+    id: 'midnight',
+    name: '深夜 emo',
+    emoji: '🌙',
+    desc: '黑白金句卡，凌晨三点的味道',
+    template: 'quote',
+    aspect: '4:5',
+    filter: 'mono',
+    texts: { free: '凌晨三点的我：\n再看一个就睡', bottom: '—— 每一个熬夜的人' },
+  },
+  {
+    id: 'slack',
+    name: '摸鱼现场',
+    emoji: '🐟',
+    desc: '一来一回两个气泡，像一段真的聊天记录',
+    template: 'chat',
+    aspect: '4:5',
+    filter: 'none',
+    texts: { top: '在忙吗？', bottom: '在忙（在摸鱼）' },
+  },
+  {
+    id: 'eat',
+    name: '干饭宣言',
+    emoji: '🍜',
+    desc: '左上标签 + 底部大字，立场非常明确',
+    template: 'tag',
+    aspect: '1:1',
+    filter: 'warm',
+    texts: { top: '干饭人', bottom: '先吃饱才有力气减肥' },
+    stickers: [{ emoji: '🍜', x: 0.8, y: 0.24, size: 150 }],
+  },
+  {
+    id: 'lostmedia',
+    name: '失传媒体',
+    emoji: '🔍',
+    desc: '高反差金句卡，一本正经地考据',
+    template: 'quote',
+    aspect: '16:9',
+    filter: 'punch',
+    texts: { free: '失传媒体：\n其实一直躺在我手机里', bottom: '—— 考古学家本人' },
+  },
+  {
+    id: 'cute',
+    name: '被自己可爱到',
+    emoji: '✨',
+    desc: '底部字幕条，轻轻一句旁白',
+    template: 'caption',
+    aspect: '4:5',
+    filter: 'vivid',
+    texts: { bottom: '今天也很可爱' },
+    stickers: [{ emoji: '✨', x: 0.2, y: 0.2, size: 130 }],
+  },
+  {
+    id: 'classic-two',
+    name: '经典两行',
+    emoji: '🅰️',
+    desc: '最原教旨的梗图：上面抛梗，下面接住',
+    template: 'classic',
+    aspect: 'auto',
+    filter: 'none',
+    texts: { top: '我很好', bottom: '只是精神状态进化成了奶蛙' },
+  },
+]
+
