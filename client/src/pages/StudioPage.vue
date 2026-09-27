@@ -9,7 +9,8 @@
  *  - 预览与导出共用同一套布局函数（utils/memeCanvas.ts），所见即所得。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { getFeatured, getImages, type ImageItem } from '@/api/images'
+import { useRoute } from 'vue-router'
+import { getFeatured, getImageById, getImages, type ImageItem } from '@/api/images'
 import {
   ASPECTS,
   FILTER_PRESETS,
@@ -41,6 +42,8 @@ import {
 } from '@/data/memeCopy'
 
 // ────────────────────────────── 状态 ──────────────────────────────
+
+const route = useRoute()
 
 const spec = ref<MemeSpec>(createDefaultSpec())
 const baseImg = shallowRef<HTMLImageElement | null>(null)
@@ -135,6 +138,22 @@ onMounted(async () => {
   }
   loadWorks()
   await loadGallery()
+  // 从详情页「做成表情包」进来：?image=<id> 直接把那张图铺成底图，
+  // 比让用户在图库里再找一遍顺手得多。
+  const fromDetail = typeof route.query.image === 'string' ? route.query.image : ''
+  if (fromDetail) {
+    try {
+      const r = await getImageById(fromDetail)
+      const item = r.data.data
+      if (item) {
+        lastPicked.value = item
+        loadBase(picFrom(item), item.title || '站内图片', 'site')
+        showToast('底图已就位，改两行字就能发')
+      }
+    } catch {
+      showToast('那张图没能加载，先从图库挑一张吧')
+    }
+  }
   // 首屏别给一块空画布：图库一到位就自动铺一张最新图，进来就是一个「已成图」的状态
   if (!baseImg.value && gallery.value.length) {
     const first = gallery.value[0]
@@ -280,6 +299,10 @@ const roleLabels = computed<Record<TextRole, string>>(() => {
       return { top: '上句', bottom: '小字', free: '大字' }
     case 'quote':
       return { top: '上句', bottom: '署名', free: '正文' }
+    case 'polaroid':
+      return { top: '上句', bottom: '落款', free: '主文案' }
+    case 'chat':
+      return { top: '对方说', bottom: '我说', free: '主文案' }
     default:
       return { top: '上句', bottom: '下句', free: '主文案' }
   }

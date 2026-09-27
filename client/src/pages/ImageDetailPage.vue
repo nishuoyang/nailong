@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { getImageById, likeImage, downloadImage } from '@/api/images'
 import { useAuthStore } from '@/stores/auth'
 // ElMessage 由 unplugin-auto-import 按需注入（见 vite.config.ts），勿手动从 'element-plus' 引入
 
 const route = useRoute()
+const router = useRouter()
 const authStore = useAuthStore()
 const queryClient = useQueryClient()
+
+/** 「做成表情包」：带着图片 id 跳进工坊，不用登录 —— 工坊本身是纯前端工具 */
+function handleMakeMeme() {
+  router.push({ name: 'studio', query: { image: imageId.value } })
+}
 
 // 详情页按真实宽高比占位：md 缩略图只缩宽不裁剪，宽度受限时高度按比例预留，
 // 图片加载后下方信息区不再跳动（替代原先 min-h-[45vh] 的粗占位）。
@@ -147,7 +153,7 @@ function handleDownload() {
         </div>
 
         <!-- Actions -->
-        <div class="flex gap-4 mt-6">
+        <div class="flex flex-wrap gap-4 mt-6">
           <el-button
             size="large"
             :type="image.isLiked ? 'danger' : 'default'"
@@ -164,6 +170,14 @@ function handleDownload() {
           >
             ⬇ 下载 ({{ image.downloadCount }})
           </el-button>
+          <!-- 下载是「拿走」，工坊是「用起来」：直接带着这张图进工坊，无需登录 -->
+          <button
+            type="button"
+            class="px-5 h-10 rounded-lg font-semibold text-amber-950 bg-gradient-to-r from-amber-400 to-orange-400 hover:shadow-lg hover:-translate-y-0.5 transition-all cursor-pointer border-0"
+            @click="handleMakeMeme"
+          >
+            ✨ 用这张做表情包
+          </button>
         </div>
       </div>
     </div>

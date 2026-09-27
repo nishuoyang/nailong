@@ -11,7 +11,7 @@
 
 // ────────────────────────────── 类型 ──────────────────────────────
 
-export type MemeTemplate = 'classic' | 'caption' | 'tag' | 'poster' | 'quote'
+export type MemeTemplate = 'classic' | 'caption' | 'tag' | 'poster' | 'quote' | 'polaroid' | 'chat'
 export type MemeAspect = 'auto' | '1:1' | '4:5' | '3:4' | '16:9'
 export type TextRole = 'top' | 'bottom' | 'free'
 
@@ -63,6 +63,8 @@ export interface MemePlate {
   fill: string
   /** 左侧竖条（quote 模板用） */
   bar?: { x: number; y: number; w: number; h: number; fill: string }
+  /** 气泡小尾巴（chat 模板用）：从 (x,y) 这个角往外支出去 */
+  tail?: { x: number; y: number; size: number; dir: 'left' | 'right'; fill: string }
 }
 
 export interface LaidOutText {
@@ -182,7 +184,38 @@ export const TEMPLATES: TemplateMeta[] = [
       bottom: { size: 48, color: '#e5e7eb', stroke: false, align: 'left' },
     },
   },
+  {
+    key: 'polaroid',
+    name: '拍立得',
+    emoji: '📸',
+    desc: '白色相纸 + 底部落款，适合做纪念卡',
+    accent: '#f8fafc',
+    roles: {
+      bottom: { size: 58, color: '#1f2937', stroke: false, align: 'center' },
+    },
+  },
+  {
+    key: 'chat',
+    name: '聊天气泡',
+    emoji: '🗨️',
+    desc: '左一句右一句，像一段真的聊天记录',
+    accent: '#3b82f6',
+    roles: {
+      top: { size: 58, color: '#0f172a', stroke: false, align: 'left' },
+      bottom: { size: 58, color: '#ffffff', stroke: false, align: 'left' },
+    },
+  },
 ]
+
+/** 拍立得相纸的几何：四边留白 + 底部更宽的落款区（绘制与布局共用同一份参数） */
+export function polaroidFrame(W: number, H: number): { side: number; top: number; band: number } {
+  const side = W * 0.05
+  const top = W * 0.05
+  const band = Math.max(H * 0.13, 120)
+  return { side, top, band }
+}
+
+const POLAROID_PAPER = '#f8fafc'
 
 export interface FilterPreset {
   key: string
@@ -311,6 +344,13 @@ function defaultAnchor(template: MemeTemplate, role: TextRole, W: number, H: num
     case 'quote':
       if (role === 'free') return { cx: W * 0.5, cy: H * 0.78 }
       return { cx: W * 0.5, cy: H * 0.9 }
+    case 'polaroid': {
+      const f = polaroidFrame(W, H)
+      return { cx: W / 2, cy: H - f.band / 2 }
+    }
+    case 'chat':
+      if (role === 'top') return { cx: W * 0.06, cy: H * 0.14 }
+      return { cx: W * 0.94, cy: H * 0.86 }
     default:
       return { cx: W / 2, cy: H / 2 }
   }
@@ -329,6 +369,10 @@ export function activeRoles(template: MemeTemplate): TextRole[] {
       return ['free', 'bottom']
     case 'quote':
       return ['free', 'bottom']
+    case 'polaroid':
+      return ['bottom']
+    case 'chat':
+      return ['top', 'bottom']
     default:
       return ['top', 'bottom']
   }
@@ -433,6 +477,13 @@ export function layoutMeme(ctx: CanvasRenderingContext2D, spec: MemeSpec, W: num
     } else if (spec.template === 'classic') {
       maxW = W * 0.9
       maxH = H * 0.26
+    } else if (spec.template === 'polaroid') {
+      const f = polaroidFrame(W, H)
+      maxW = W - f.side * 2 - W * 0.06
+      maxH = f.band * 0.6
+    } else if (spec.template === 'chat') {
+      maxW = W * 0.68
+      maxH = H * 0.2
     }
 
     const family = spec.template === 'quote' ? UI_FONT : MEME_FONT
@@ -452,10 +503,14 @@ export function layoutMeme(ctx: CanvasRenderingContext2D, spec: MemeSpec, W: num
     const anchor = defaultAnchor(spec.template, block.role, W, H)
     let cx = (block.x ?? anchor.cx / W) * W
     const cy = (block.y ?? anchor.cy / H) * H
-    // 标签模板的标签块是左对齐的胶囊：按「左边缘贴齐」而不是「中心对齐」定位，
-    // 否则字数一变，左边距就跟着漂。拖过的块（x 非 null）不参与这条规则。
-    if (block.x === null && spec.template === 'tag' && block.role === 'top') {
-      cx = W * 0.06 + w / 2
+    // 左/右对齐的块按「边缘贴齐」定位，否则字数一变边距就跟着漂。
+    // 拖过的块（x 非 null）不参与这条规则，用户的手动位置永远优先。
+    if (block.x === null) {
+      if (spec.template === 'tag' && block.role === 'top') {
+        cx = W * 0.06 + w / 2
+      } else if (spec.template === 'chat') {
+        cx = block.role === 'top' ? W * 0.06 + w / 2 : W * 0.94 - w / 2
+      }
     }
 
     const top = cy - h / 2
@@ -501,6 +556,25 @@ export function layoutMeme(ctx: CanvasRenderingContext2D, spec: MemeSpec, W: num
       }
       shadow = true
     } else if (spec.template === 'poster' && block.role === 'free') {
+      shadow = true
+    } else if (spec.template === 'chat') {
+      // 对方（左）：白底深字；自己（右）：蓝底白字 —— 一眼就是聊天记录的观感
+      const isLeft = block.role === 'top'
+      plate = {
+        x: left,
+        y: top,
+        w,
+        h,
+        radius: Math.min(28, h * 0.36),
+        fill: isLeft ? 'rgba(255,255,255,0.95)' : 'rgba(37,99,235,0.95)',
+        tail: {
+          x: isLeft ? left + h * 0.32 : left + w - h * 0.32,
+          y: top + h - 2,
+          size: h * 0.26,
+          dir: isLeft ? 'left' : 'right',
+          fill: isLeft ? 'rgba(255,255,255,0.95)' : 'rgba(37,99,235,0.95)',
+        },
+      }
       shadow = true
     }
 
@@ -574,6 +648,22 @@ export function drawMeme(
   }
   ctx.restore()
 
+  // 2a) 模板纸面（拍立得）：底图先满铺，再用相纸四周盖回去，露出来的就是「照片」区
+  if (spec.template === 'polaroid') {
+    const f = polaroidFrame(W, H)
+    ctx.save()
+    ctx.fillStyle = POLAROID_PAPER
+    ctx.fillRect(0, 0, W, f.top)
+    ctx.fillRect(0, f.top, f.side, H - f.top)
+    ctx.fillRect(W - f.side, f.top, f.side, H - f.top)
+    ctx.fillRect(0, H - f.band, W, f.band)
+    // 照片边缘一道极淡的内影，让相纸有厚度
+    ctx.strokeStyle = 'rgba(15,23,42,0.14)'
+    ctx.lineWidth = 3
+    ctx.strokeRect(f.side, f.top, W - f.side * 2, H - f.top - f.band)
+    ctx.restore()
+  }
+
   // 2) 模板装饰（底板）
   for (const t of layout.texts) {
     if (!t.plate) continue
@@ -591,6 +681,18 @@ export function drawMeme(
     ctx.fillStyle = t.plate.fill
     roundRectPath(ctx, t.plate, t.plate.radius)
     ctx.fill()
+
+    // 气泡尾巴：贴着圆角矩形底边画一个小三角，方向由 dir 决定
+    if (t.plate.tail) {
+      const tl = t.plate.tail
+      ctx.beginPath()
+      ctx.moveTo(tl.x, tl.y - 2)
+      ctx.lineTo(tl.x + (tl.dir === 'left' ? -tl.size : tl.size), tl.y + tl.size * 0.85)
+      ctx.lineTo(tl.x + (tl.dir === 'left' ? tl.size * 0.5 : -tl.size * 0.5), tl.y - 2)
+      ctx.closePath()
+      ctx.fillStyle = tl.fill
+      ctx.fill()
+    }
     ctx.restore()
 
     if (t.plate.bar) {
@@ -644,7 +746,12 @@ export function drawMeme(
         // 二次描边让边缘更实，缩放后不发虚
         ctx.lineWidth = Math.max(2, t.fontSize * 0.07)
         ctx.strokeText(line, anchorX, y)
-      } else if (t.shadow) {
+      } else if (
+        t.shadow &&
+        (spec.template === 'caption' || spec.template === 'quote' || spec.template === 'poster')
+      ) {
+        // 只在「字直接压在图上」的模板给文字加投影；气泡/胶囊里的字有自己的底板，
+        // 再加投影只会显脏
         ctx.shadowColor = 'rgba(0,0,0,0.6)'
         ctx.shadowBlur = t.fontSize * 0.22
         ctx.shadowOffsetY = t.fontSize * 0.04
