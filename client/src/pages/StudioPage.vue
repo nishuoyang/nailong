@@ -183,6 +183,7 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   await nextTick()
   scheduleRender()
+  void drawWall()
 })
 
 onBeforeUnmount(() => {
@@ -300,13 +301,13 @@ const fileInput = ref<HTMLInputElement | null>(null)
  * 配方 = 版式 + 比例 + 滤镜 + 文案 + 贴纸位置，一次全给你。
  * 对没耐心排版的人（大多数人）来说，这一排按钮才是这个工具的入口。
  */
-function applyRecipe(r: MemeRecipe) {
-  let next = applyTemplate(spec.value, r.template)
-  next = {
-    ...next,
+function specFromRecipe(current: MemeSpec, r: MemeRecipe): MemeSpec {
+  const base = applyTemplate(current, r.template)
+  return {
+    ...base,
     aspect: r.aspect,
     filter: { preset: r.filter, brightness: 1, contrast: 1, saturate: 1 },
-    texts: next.texts.map((t) => ({ ...t, content: r.texts[t.role] ?? t.content })),
+    texts: base.texts.map((t) => ({ ...t, content: r.texts[t.role] ?? '' })),
     stickers: (r.stickers ?? []).map((s) => ({
       id: uid('s'),
       emoji: s.emoji,
@@ -316,11 +317,18 @@ function applyRecipe(r: MemeRecipe) {
       rotation: 0,
     })),
   }
-  spec.value = next
+}
+
+function applyRecipe(r: MemeRecipe) {
+  spec.value = specFromRecipe(spec.value, r)
   selected.value = null
   rollHint()
   showToast(`配方已套用：${r.name} —— 直接下载，或者接着改`)
 }
+
+// ────────────────────────────── 灵感墙（实时渲染的成品预览） ──────────────────────────────
+
+
 
 // ────────────────────────────── 草稿自动保存 ──────────────────────────────
 
@@ -874,6 +882,85 @@ function resetAll() {
   showToast('已清空，重新来一张')
 }
 
+// ────────────────────────────── 灵感墙（实时渲染的成品预览） ──────────────────────────────
+
+/**
+ * 与其放一堆静态示意图，不如让引擎当场画：8 个配方 × 站内图库的缩略图，
+ * 进页面就能看到「这个工具能做出什么」，点一下就换到主画布接着改。
+ * 用 300px 缩略图渲染，整面墙的流量比一张原图还小。
+ *
+ * 注意：这段必须放在 gallery 声明之后 —— `watch(computed)` 会在初始化时就求值一次，
+ * 放在前面会直接踩到 TDZ（Cannot access 'x' before initialization）。
+ */
+const wallCanvases = new Map<string, HTMLCanvasElement>()
+
+function setWallCanvas(el: unknown, key: string) {
+  if (el instanceof HTMLCanvasElement) wallCanvases.set(key, el)
+}
+
+const wallItems = computed(() => {
+  const pool = gallery.value
+  if (!pool.length) return []
+  return MEME_RECIPES.map((recipe, i) => {
+    const image = pool[(i * 3 + 1) % pool.length]
+    return {
+      key: `${recipe.id}-${image.id}`,
+      recipe,
+      image,
+      thumb: image.thumbnailSmUrl || image.thumbnailUrl || image.url,
+    }
+  })
+})
+
+const imgCache = new Map<string, HTMLImageElement>()
+
+function loadThumb(src: string): Promise<HTMLImageElement | null> {
+  const hit = imgCache.get(src)
+  if (hit) return Promise.resolve(hit)
+  return new Promise((resolve) => {
+    const el = new Image()
+    el.decoding = 'async'
+    el.onload = () => {
+      imgCache.set(src, el)
+      resolve(el)
+    }
+    el.onerror = () => resolve(null)
+    el.src = src
+  })
+}
+
+async function drawWall() {
+  for (const item of wallItems.value) {
+    const cvs = wallCanvases.get(item.key)
+    if (!cvs) continue
+    const img = await loadThumb(item.thumb)
+    // 图片是异步加载的，回来时组件可能已经重渲染，必须重新取一次
+    const cvs2 = wallCanvases.get(item.key)
+    if (!img || !cvs2) continue
+    const preview = specFromRecipe(createDefaultSpec(), item.recipe)
+    const { W, H } = computeCanvasSize(preview.aspect, img)
+    const scale = 0.34 * Math.min(2, window.devicePixelRatio || 1)
+    cvs2.width = Math.round(W * scale)
+    cvs2.height = Math.round(H * scale)
+    const ctx = cvs2.getContext('2d')
+    if (!ctx) continue
+    ctx.setTransform(scale, 0, 0, scale, 0, 0)
+    const layout = layoutMeme(ctx, preview, W, H)
+    drawMeme(ctx, layout, preview, img)
+  }
+}
+
+function applyWall(item: { recipe: MemeRecipe; image: ImageItem }) {
+  lastPicked.value = item.image
+  applyRecipe(item.recipe)
+  loadBase(picFrom(item.image), item.image.title || '站内图片', 'site')
+  showToast('已换到你的画布 —— 改两个字就是你的了')
+}
+
+watch(wallItems, () => {
+  void nextTick().then(drawWall)
+})
+
 // ────────────────────────────── 杂项 ──────────────────────────────
 
 const filterState = computed(() => spec.value.filter)
@@ -1205,6 +1292,35 @@ function setAspect(a: MemeAspect) {
     <Transition name="toast">
       <div v-if="toast" class="studio-toast">{{ toast }}</div>
     </Transition>
+
+    <!-- 灵感墙：8 个配方 × 站内图，由引擎当场画出来 -->
+    <section class="wall">
+      <div class="wall-head">
+        <h2 class="wall-title">看看能做出什么</h2>
+        <p class="wall-sub">
+          下面每一张都是这个工坊<strong>实时</strong>画出来的（配方 × 站内图库的图）。
+          看中哪张就点一下 —— 它会整个换到你的画布上，改两个字就是你的了。
+        </p>
+      </div>
+      <div v-if="!wallItems.length" class="wall-empty">图库加载完就会出现（如果一直空着，检查一下网络）</div>
+      <div v-else class="wall-grid">
+        <button
+          v-for="item in wallItems"
+          :key="item.key"
+          class="wall-card"
+          :title="`${item.recipe.name}：${item.recipe.desc}`"
+          @click="applyWall(item)"
+        >
+          <span class="wall-canvas-wrap">
+            <canvas :ref="(el: unknown) => setWallCanvas(el, item.key)" class="wall-canvas" />
+          </span>
+          <span class="wall-meta">
+            <span class="wall-name">{{ item.recipe.emoji }} {{ item.recipe.name }}</span>
+            <span class="wall-from">底图：{{ item.image.title }}</span>
+          </span>
+        </button>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -1907,6 +2023,103 @@ function setAspect(a: MemeAspect) {
 }
 .recipe-name {
   font-weight: 600;
+}
+
+/* ── 灵感墙 ── */
+.wall {
+  margin-top: 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: linear-gradient(180deg, rgba(18, 26, 46, 0.75), rgba(9, 13, 26, 0.85));
+  padding: 1rem 0.9rem 1.1rem;
+}
+.wall-head {
+  margin-bottom: 0.85rem;
+}
+.wall-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.wall-title::before {
+  content: '✨';
+  font-size: 0.95rem;
+}
+.wall-sub {
+  margin: 0.3rem 0 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.wall-sub strong {
+  color: var(--accent);
+}
+.wall-empty {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.wall-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+@media (min-width: 768px) {
+  .wall-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1280px) {
+  .wall-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.wall-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.4rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+  background: rgba(148, 163, 184, 0.06);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.wall-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.4);
+}
+.wall-canvas-wrap {
+  display: block;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #0b1020;
+}
+.wall-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.wall-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0 0.15rem 0.15rem;
+}
+.wall-name {
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.wall-from {
+  font-size: 0.66rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── 提示条 ── */
