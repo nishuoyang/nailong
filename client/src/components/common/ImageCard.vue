@@ -66,5 +66,17 @@ const srcset = computed(() => {
         <p class="text-xs text-white truncate">{{ image.title }}</p>
       </div>
     </div>
+
+    <!-- 就地做表情包：把「用图」这件事铺到每一个浏览入口上。
+         移动端没有 hover，所以小屏常驻、大屏才随 hover 出现。
+         注意卡片的根节点是 <router-link>，这里必须 @click.stop，否则会跟着跳详情页。 -->
+    <router-link
+      :to="`/studio?image=${image.id}`"
+      class="absolute top-2 right-2 px-2 py-1 rounded-full text-[11px] font-semibold no-underline bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950 shadow-md transition-all duration-300 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 hover:scale-105"
+      title="用这张做表情包"
+      @click.stop
+    >
+      ✨ 做表情包
+    </router-link>
   </router-link>
 </template>

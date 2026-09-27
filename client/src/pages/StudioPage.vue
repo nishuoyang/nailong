@@ -14,6 +14,8 @@ import { getFeatured, getImageById, getImages, type ImageItem } from '@/api/imag
 import {
   ASPECTS,
   FILTER_PRESETS,
+  FONT_KEYS,
+  FONT_STACKS,
   TEMPLATES,
   activeRoles,
   applyTemplate,
@@ -673,6 +675,8 @@ function resetPosition() {
 }
 
 const SWATCHES = ['#ffffff', '#facc15', '#0f172a', '#ef4444', '#22d3ee', '#f472b6', '#22c55e', '#a78bfa']
+/** 描边色：默认第一项就是经典黑边，顺序不要动 */
+const STROKE_COLORS = ['#000000', '#ffffff', '#facc15', '#2563eb']
 
 // ────────────────────────────── 一键灵感 ──────────────────────────────
 
@@ -1208,10 +1212,36 @@ function setAspect(a: MemeAspect) {
               </div>
             </div>
             <div class="ctl-row">
+              <span class="ctl-label">字体</span>
+              <div class="mood-row">
+                <button
+                  v-for="f in FONT_KEYS"
+                  :key="f"
+                  :class="['chip', (t.font ?? 'bold') === f ? 'chip-on' : '']"
+                  :title="FONT_STACKS[f].label"
+                  :style="{ fontFamily: FONT_STACKS[f].family }"
+                  @click="t.font = f"
+                >
+                  {{ FONT_STACKS[f].label }}
+                </button>
+              </div>
+            </div>
+            <div class="ctl-row">
               <span class="ctl-label">描边</span>
               <button :class="['toggle', t.stroke ? 'toggle-on' : '']" @click="t.stroke = !t.stroke">
                 {{ t.stroke ? '经典黑边' : '无描边' }}
               </button>
+              <div v-if="t.stroke" class="swatches">
+                <button
+                  v-for="c in STROKE_COLORS"
+                  :key="c"
+                  class="swatch swatch-stroke"
+                  :class="(t.strokeColor || STROKE_COLORS[0]) === c ? 'swatch-on' : ''"
+                  :style="{ background: c }"
+                  :title="c"
+                  @click="t.strokeColor = c"
+                />
+              </div>
               <button class="btn btn-ghost btn-xs" @click="resetPosition">复位位置</button>
             </div>
           </template>

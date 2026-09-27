@@ -33,6 +33,10 @@ export interface MemeTextBlock {
   size: number
   color: string
   stroke: boolean
+  /** 描边色（缺省=经典黑边）。旧的草稿/作品里没有这个字段，读的时候要有兜底 */
+  strokeColor?: string
+  /** 字体风格（缺省=经典粗体，同样是为兼容存量数据） */
+  font?: MemeFont
   align: 'left' | 'center' | 'right'
   rotation: number
 }
@@ -119,6 +123,38 @@ const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans
 const MIN_FONT = 26
 const MAX_LINES = 4
 
+/**
+ * 字体风格：全部用**系统字体栈**，不引入任何外部字体 ——
+ * 生产 CSP 是 `font-src 'self' data:`，外部字体本来就会被拦掉；
+ * 而且表情包要的是「一眼认出来」的观感，不是设计感。
+ */
+export type MemeFont = 'bold' | 'serif' | 'round' | 'hand'
+
+export const FONT_STACKS: Record<MemeFont, { label: string; family: string; weight: number }> = {
+  bold: { label: '经典粗体', family: MEME_FONT, weight: 900 },
+  serif: {
+    label: '宋体',
+    family: '"Songti SC","SimSun","Noto Serif CJK SC","Source Han Serif SC",Georgia,serif',
+    weight: 700,
+  },
+  round: {
+    label: '圆黑',
+    family: '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Heiti SC",sans-serif',
+    weight: 800,
+  },
+  hand: {
+    label: '手写',
+    family: '"Kaiti SC","KaiTi","STKaiti","Noto Serif CJK SC",cursive',
+    weight: 700,
+  },
+}
+
+export const FONT_KEYS: MemeFont[] = ['bold', 'serif', 'round', 'hand']
+
+function fontStackOf(key: MemeFont | undefined): { family: string; weight: number } {
+  return FONT_STACKS[key ?? 'bold'] ?? FONT_STACKS.bold
+}
+
 export interface TemplateMeta {
   key: MemeTemplate
   name: string
@@ -126,7 +162,12 @@ export interface TemplateMeta {
   desc: string
   accent: string
   /** 该模板下每个角色默认字号与配色 */
-  roles: Partial<Record<TextRole, { size: number; color: string; stroke: boolean; align: 'left' | 'center' | 'right' }>>
+  roles: Partial<
+    Record<
+      TextRole,
+      { size: number; color: string; stroke: boolean; align: 'left' | 'center' | 'right'; font?: MemeFont }
+    >
+  >
 }
 
 export const TEMPLATES: TemplateMeta[] = [
@@ -180,8 +221,8 @@ export const TEMPLATES: TemplateMeta[] = [
     desc: '左下竖条 + 细体大字，一本正经地胡说八道',
     accent: '#22d3ee',
     roles: {
-      free: { size: 78, color: '#ffffff', stroke: false, align: 'left' },
-      bottom: { size: 48, color: '#e5e7eb', stroke: false, align: 'left' },
+      free: { size: 78, color: '#ffffff', stroke: false, align: 'left', font: 'serif' },
+      bottom: { size: 48, color: '#e5e7eb', stroke: false, align: 'left', font: 'serif' },
     },
   },
   {
@@ -191,7 +232,7 @@ export const TEMPLATES: TemplateMeta[] = [
     desc: '白色相纸 + 底部落款，适合做纪念卡',
     accent: '#f8fafc',
     roles: {
-      bottom: { size: 58, color: '#1f2937', stroke: false, align: 'center' },
+      bottom: { size: 58, color: '#1f2937', stroke: false, align: 'center', font: 'hand' },
     },
   },
   {
@@ -444,6 +485,8 @@ export function applyTemplate(spec: MemeSpec, template: MemeTemplate): MemeSpec 
       size: style.size,
       color: style.color,
       stroke: style.stroke,
+      strokeColor: exist?.strokeColor,
+      font: style.font ?? 'bold',
       align: style.align,
       rotation: 0,
     }
@@ -486,8 +529,11 @@ export function layoutMeme(ctx: CanvasRenderingContext2D, spec: MemeSpec, W: num
       maxH = H * 0.2
     }
 
-    const family = spec.template === 'quote' ? UI_FONT : MEME_FONT
-    const weight = spec.template === 'quote' ? 700 : 900
+    // 字体：显式指定的优先，其次跟模板给该角色的默认，最后回落到经典粗体。
+    // 供 autoFit / 测量 / 绘制三处共用，保证「量出来的宽度」就是「画出来的宽度」。
+    const stack = fontStackOf(block.font)
+    const family = stack.family
+    const weight = stack.weight
     const fitted = autoFit(ctx, content.trim(), maxW, maxH, block.size, family, weight)
 
     // 文字实测宽度（用于外框与命中检测）
@@ -718,8 +764,8 @@ export function drawMeme(
       ctx.rotate((t.rotation * Math.PI) / 180)
       ctx.translate(-t.cx, -t.cy)
     }
-    const family = spec.template === 'quote' ? UI_FONT : MEME_FONT
-    const weight = spec.template === 'quote' ? 700 : 900
+    const family = fontStackOf(block.font).family
+    const weight = fontStackOf(block.font).weight
     ctx.font = fontOf(t.fontSize, family, weight)
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'center'
@@ -740,8 +786,8 @@ export function drawMeme(
       if (block.stroke) {
         ctx.lineJoin = 'round'
         ctx.miterLimit = 2
+        ctx.strokeStyle = block.strokeColor || 'rgba(0,0,0,0.92)'
         ctx.lineWidth = Math.max(4, t.fontSize * 0.14)
-        ctx.strokeStyle = 'rgba(0,0,0,0.92)'
         ctx.strokeText(line, anchorX, y)
         // 二次描边让边缘更实，缩放后不发虚
         ctx.lineWidth = Math.max(2, t.fontSize * 0.07)
