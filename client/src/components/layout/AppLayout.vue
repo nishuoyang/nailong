@@ -1,198 +1,52 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, defineAsyncComponent } from 'vue'
-import { useAuthStore } from '@/stores/auth'
-import { useRouter } from 'vue-router'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import SiteHeader from './SiteHeader.vue'
+import SiteFooter from './SiteFooter.vue'
+import MobileDock from './MobileDock.vue'
+import CommandPalette from './CommandPalette.vue'
+import ToastHost from '@/components/ui/ToastHost.vue'
+import { useCommandPalette } from '@/composables/useCommandPalette'
 
-const authStore = useAuthStore()
-const router = useRouter()
-
-// 反馈弹窗懒加载（待办 #4）：独立成块的 FeedbackDialog 只包含 el-dialog/el-form/
-// el-input/el-button，用户点开「📧」时才下载，不再占首屏 eager 体积。
+const route = useRoute()
+const isAdmin = computed(() => route.path.startsWith('/admin'))
 const FeedbackDialog = defineAsyncComponent(() => import('./FeedbackDialog.vue'))
-
-// 主题模式 — 从 localStorage 读取初始值避免闪烁
-const isDark = ref(localStorage.getItem('theme') === 'dark')
-const showThemePopover = ref(false)
 const showFeedback = ref(false)
+const { toggle, isOpen } = useCommandPalette()
 
-onMounted(() => {
-  applyTheme()
-})
+function isTypingTarget(target: EventTarget | null) {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName.toLowerCase()
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable
+}
 
-watch(isDark, () => {
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
-  applyTheme()
-})
-
-function applyTheme() {
-  if (isDark.value) {
-    document.documentElement.classList.add('dark')
-  } else {
-    document.documentElement.classList.remove('dark')
+function onKeydown(event: KeyboardEvent) {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    toggle()
+    return
+  }
+  if (event.key === '/' && !isOpen.value && !isTypingTarget(event.target)) {
+    event.preventDefault()
+    toggle()
   }
 }
 
-function toggleTheme() {
-  isDark.value = !isDark.value
-  showThemePopover.value = false
-}
-
-function handleLogout() {
-  authStore.logout()
-  router.push('/')
-}
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <div
-    class="min-h-screen flex flex-col transition-colors duration-300"
-    :class="isDark ? 'bg-gray-900 text-gray-200' : 'bg-gray-100 text-gray-800'"
-  >
-    <!-- Header -->
-    <header
-      class="shadow-sm border-b sticky top-0 z-50 transition-colors duration-300"
-      :class="isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'"
-    >
-      <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-        <div class="flex items-center gap-8">
-          <router-link to="/" class="text-2xl font-bold text-blue-600 no-underline flex items-center gap-2">
-            <img src="/logo.png" alt="奶龙" class="w-8 h-8 rounded-full object-cover" />
-            奶龙
-          </router-link>
-          <nav class="hidden md:flex items-center gap-6">
-            <router-link to="/featured" class="hover:text-blue-600 no-underline transition-colors"
-              :class="isDark ? 'text-gray-300' : 'text-gray-600'">
-              精选
-            </router-link>
-            <router-link to="/other" class="hover:text-blue-600 no-underline transition-colors"
-              :class="isDark ? 'text-gray-300' : 'text-gray-600'">
-              其他推荐
-            </router-link>
-            <router-link to="/" class="hover:text-blue-600 no-underline transition-colors"
-              :class="isDark ? 'text-gray-300' : 'text-gray-600'">
-              发现
-            </router-link>
-            <router-link to="/story" class="hover:text-blue-600 no-underline transition-colors"
-              :class="isDark ? 'text-gray-300' : 'text-gray-600'">
-              奶蛙史
-            </router-link>
-            <router-link
-              to="/studio"
-              class="no-underline transition-all px-2.5 py-1 rounded-full text-sm font-semibold bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950 hover:shadow-md hover:scale-105"
-              title="表情包工坊：拖拽成图，三秒出片"
-            >
-              ✨ 表情包工坊
-            </router-link>
-          </nav>
-        </div>
-
-        <div class="flex items-center gap-4">
-          <!-- 移动端也能一眼看到工坊入口（桌面端走上面的导航，避免重复） -->
-          <router-link
-            to="/studio"
-            class="md:hidden no-underline px-2 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950"
-          >
-            ✨ 工坊
-          </router-link>
-          <template v-if="authStore.isLoggedIn">
-            <router-link to="/upload" class="text-sm hover:text-blue-600 no-underline transition-colors"
-              :class="isDark ? 'text-gray-300' : 'text-gray-600'">
-              上传
-            </router-link>
-            <router-link to="/profile" class="text-sm hover:text-blue-600 no-underline transition-colors"
-              :class="isDark ? 'text-gray-300' : 'text-gray-600'">
-              {{ authStore.user?.username }}
-            </router-link>
-            <router-link
-              v-if="authStore.isAdmin"
-              to="/admin"
-              class="text-sm text-orange-600 hover:text-orange-700 no-underline font-medium"
-            >
-              管理
-            </router-link>
-            <button
-              @click="handleLogout"
-              class="text-sm bg-transparent border-none cursor-pointer transition-colors"
-              :class="isDark ? 'text-gray-400 hover:text-red-400' : 'text-gray-400 hover:text-red-500'"
-            >
-              退出
-            </button>
-          </template>
-        </div>
-      </div>
-    </header>
-
-    <!-- Main Content -->
-    <main class="flex-1">
+  <div class="grain relative flex min-h-dvh flex-col bg-paper text-ink">
+    <SiteHeader />
+    <main class="flex-1" :class="isAdmin ? '' : 'pb-24 lg:pb-0'">
       <slot />
     </main>
-
-    <!-- Footer -->
-    <footer
-      class="border-t py-8 text-center text-sm transition-colors duration-300 relative"
-      :class="isDark ? 'border-gray-700 text-gray-500' : 'border-gray-200 text-gray-400'"
-    >
-      <p class="flex items-center justify-center gap-2">
-        <img src="/logo.png" alt="奶龙" class="w-5 h-5 rounded-full object-cover inline-block" />
-        奶龙 - 图片展示平台
-      </p>
-      <p class="mt-1">
-        <a href="https://beian.miit.gov.cn/" target="_blank" class="no-underline transition-colors"
-          :class="isDark ? 'text-gray-500 hover:text-gray-400' : 'text-gray-400 hover:text-gray-500'">
-          苏ICP备2026047429号-1
-        </a>
-      </p>
-      <button
-        class="absolute left-6 top-1/2 -translate-y-1/2 text-xl bg-transparent border-none cursor-pointer hover:scale-110 transition-transform"
-        @click="showFeedback = true"
-        title="意见反馈"
-      >
-        📧
-      </button>
-    </footer>
-
-    <!-- 反馈弹窗：懒加载（只渲染一次，组件与 chunk 均在点开时按需加载） -->
+    <SiteFooter v-if="!isAdmin" @feedback="showFeedback = true" />
+    <MobileDock v-if="!isAdmin" />
+    <CommandPalette />
     <FeedbackDialog v-if="showFeedback" v-model="showFeedback" />
-
-    <!-- 右下角设置浮动按钮 -->
-    <div class="fixed bottom-6 right-6 z-50">
-      <button
-        @click="showThemePopover = !showThemePopover"
-        class="w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl transition-all duration-300"
-        :class="isDark ? 'bg-gray-700 hover:bg-gray-600' : 'bg-white hover:bg-gray-50'"
-      >
-        ⚙️
-      </button>
-
-      <!-- 弹出面板 -->
-      <Transition name="popover">
-        <div
-          v-if="showThemePopover"
-          class="absolute bottom-14 right-0 rounded-xl shadow-xl p-4 w-48 transition-colors duration-300"
-          :class="isDark ? 'bg-gray-800 text-gray-200' : 'bg-white text-gray-800'"
-        >
-          <div class="flex items-center justify-between">
-            <span class="text-sm">{{ isDark ? '🌙 黑夜模式' : '☀️ 白天模式' }}</span>
-            <el-switch
-              :model-value="isDark"
-              size="small"
-              @change="toggleTheme"
-            />
-          </div>
-        </div>
-      </Transition>
-    </div>
+    <ToastHost />
   </div>
 </template>
-
-<style scoped>
-.popover-enter-active,
-.popover-leave-active {
-  transition: all 0.2s ease;
-}
-.popover-enter-from,
-.popover-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
-}
-</style>

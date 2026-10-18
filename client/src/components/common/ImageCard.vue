@@ -1,82 +1,205 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import type { ImageItem } from '@/api/images'
+import { toggleFavorite } from '@/api/social'
+import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+import AppIcon from '@/components/ui/AppIcon.vue'
+import UiAvatar from '@/components/ui/UiAvatar.vue'
 
-const props = defineProps<{
-  image: ImageItem
+const props = withDefaults(defineProps<{ image: ImageItem; compact?: boolean; removable?: boolean }>(), {
+  compact: false,
+  removable: false,
+})
+const emit = defineEmits<{
+  (e: 'favorite', value: { favorited: boolean; favoriteCount: number }): void
+  (e: 'remove', id: string): void
 }>()
 
-// 宽高比占位（根治 CLS）：服务端在 width/height（md 缩略图像素）未知前（如刚迁移、
-// 未回填的存量行）返回 null，此时退化为原先的行为（加载后自然撑开）。
+const router = useRouter()
+const auth = useAuthStore()
+const toast = useToast()
+
+const loaded = ref(false)
+const favoriting = ref(false)
+const favorited = ref(Boolean(props.image.isFavorited))
+const favoriteCount = ref(props.image.favoriteCount ?? 0)
+
 const aspectRatio = computed(() => {
   const { width, height } = props.image
   return width && height ? `${width} / ${height}` : undefined
 })
 
-// srcset 两档：300px（sm）与 800px（md）。sizes 是分栏布局的近似值：
-// 以列数近似（1280px 起 25vw ≈ 3/4 栏每卡 300~330px；768px 起 3 栏 30vw；
-// 手机 2 栏 38vw ≈ 142~163px）。高 DPR 桌面会选 800w（比改前固定 sm 更锐利），
-// 小屏高 DPR 视内容量大多选 300w —— 见 docs/性能优化记录 第二十二章的取舍说明。
 const srcset = computed(() => {
   const sm = props.image.thumbnailSmUrl || props.image.thumbnailUrl || props.image.url
   const md = props.image.thumbnailUrl || props.image.url
   if (!sm || !md) return undefined
   return `${sm} 300w, ${md} 800w`
 })
+
+const cover = computed(() => props.image.thumbnailSmUrl || props.image.thumbnailUrl || props.image.url)
+const tags = computed(() => (props.image.tags || []).slice(0, 2))
+
+function open() {
+  router.push(`/images/${props.image.id}`)
+}
+
+async function onFavorite() {
+  if (!auth.isLoggedIn) {
+    toast.warning('登录后就能收藏这张图了')
+    router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
+    return
+  }
+  if (favoriting.value) return
+  favoriting.value = true
+  try {
+    const res = await toggleFavorite(props.image.id)
+    favorited.value = res.data.data.favorited
+    favoriteCount.value = res.data.data.favoriteCount
+    emit('favorite', res.data.data)
+    toast.success(res.data.data.favorited ? '已收进收藏夹' : '已取消收藏')
+  } catch (err: any) {
+    toast.error(err.response?.data?.message || '收藏失败，稍后再试')
+  } finally {
+    favoriting.value = false
+  }
+}
+
+function makeMeme() {
+  router.push({ name: 'studio', query: { image: props.image.id } })
+}
 </script>
 
 <template>
-  <!-- Pixiv 排行榜风格瀑布流卡片：按原图比例完整展示，信息悬浮在图上 -->
-  <router-link
-    :to="`/images/${image.id}`"
-    class="group block relative no-underline rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800"
+  <article
+    class="group relative mb-4 break-inside-avoid cursor-pointer overflow-hidden rounded-[20px] border border-line bg-surface transition-all duration-300 hover:-translate-y-1 hover:border-ink/45 hover:shadow-[0_18px_40px_-24px_rgba(30,22,12,.5)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+    role="link"
+    tabindex="0"
+    :aria-label="`查看图片：${image.title}`"
+    @click="open"
+    @keydown.enter.prevent="open"
+    @keydown.space.prevent="open"
   >
-    <!-- 原图比例完整展示（不裁剪）：img 宽度 100%、高度自适应；
-         aspect-ratio 预占位（服务端回填宽高后无 CLS），srcset 按 DPR/视口选档 -->
-    <img
-      :src="image.thumbnailSmUrl || image.thumbnailUrl || image.url"
-      :srcset="srcset"
-      sizes="(min-width: 1280px) 25vw, (min-width: 768px) 30vw, 38vw"
-      :style="aspectRatio ? { aspectRatio } : undefined"
-      :alt="image.title"
-      class="w-full h-auto block transition-opacity duration-300 group-hover:opacity-90"
-      loading="lazy"
-    />
+    <div
+      class="relative overflow-hidden"
+      :style="{
+        aspectRatio,
+        backgroundColor: image.dominantColor || 'var(--surface-2)',
+      }"
+    >
+      <img
+        v-if="image.blurDataUrl"
+        :src="image.blurDataUrl"
+        alt=""
+        aria-hidden="true"
+        class="absolute inset-0 h-full w-full scale-105 object-cover blur-md transition-opacity duration-500"
+        :class="loaded ? 'opacity-0' : 'opacity-100'"
+      />
+      <img
+        :src="cover"
+        :srcset="srcset"
+        sizes="(min-width: 1280px) 25vw, (min-width: 768px) 30vw, 46vw"
+        :alt="image.title"
+        :style="aspectRatio ? { aspectRatio } : undefined"
+        class="relative h-auto w-full object-cover transition-all duration-700 group-hover:scale-[1.015]"
+        :class="loaded ? 'opacity-100' : 'opacity-0'"
+        loading="lazy"
+        decoding="async"
+        @load="loaded = true"
+      />
 
-    <!-- 底部信息条（常驻：作者名 + 点赞/下载） -->
-    <div class="absolute inset-x-0 bottom-0 px-2.5 pb-2 pt-8 bg-gradient-to-t from-black/70 to-transparent transition-opacity duration-300">
-      <div class="flex items-center justify-between gap-2 text-xs text-white">
-        <router-link
+      <!-- top-right quick actions -->
+      <div class="absolute right-2 top-2 flex translate-y-[-4px] gap-1.5 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
+        <button
+          class="grid h-8 w-8 place-items-center rounded-full border border-white/40 bg-black/35 text-white backdrop-blur-sm transition hover:bg-accent hover:text-white"
+          :aria-label="favorited ? '取消收藏' : '收藏'"
+          :disabled="favoriting"
+          @click.stop="onFavorite"
+        >
+          <AppIcon name="bookmark" :size="14" :filled="favorited" />
+        </button>
+        <button
+          class="grid h-8 w-8 place-items-center rounded-full border border-white/40 bg-black/35 text-white backdrop-blur-sm transition hover:bg-butter hover:text-[#181510]"
+          aria-label="用这张做表情包"
+          @click.stop="makeMeme"
+        >
+          <AppIcon name="sparkles" :size="14" />
+        </button>
+      </div>
+
+      <button
+        v-if="props.removable"
+        class="absolute left-2 top-2 grid h-8 w-8 place-items-center rounded-full border border-white/40 bg-black/35 text-white opacity-0 backdrop-blur-sm transition hover:bg-accent group-hover:opacity-100"
+        aria-label="从收藏夹移除"
+        @click.stop="emit('remove', props.image.id)"
+      >
+        <AppIcon name="trash" :size="13" />
+      </button>
+
+      <span
+        v-if="image.status && image.status !== 'approved'"
+        class="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full border border-white/30 bg-black/55 px-2 py-1 font-mono text-[8px] uppercase tracking-wide text-white backdrop-blur-sm"
+      >
+        {{ image.status === 'pending' ? '审核中' : image.status === 'rejected' ? '未通过' : '已下架' }}
+      </span>
+
+      <span
+        v-if="image.isFeatured"
+        class="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full border border-ink/20 bg-butter px-2 py-1 font-mono text-[9px] font-semibold uppercase tracking-wide text-[#181510]"
+      >
+        <AppIcon name="star" :size="9" filled /> Pick
+      </span>
+
+      <!-- bottom meta on the image only for compact mode -->
+      <div
+        v-if="compact"
+        class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-2 pt-8 text-[11px] text-white"
+      >
+        <p class="truncate font-medium">{{ image.title }}</p>
+      </div>
+    </div>
+
+    <div v-if="!compact" class="px-3 pb-3 pt-2.5">
+      <div class="flex items-start justify-between gap-2">
+        <h3 class="line-clamp-2 min-w-0 text-[13.5px] font-semibold leading-snug text-ink transition group-hover:text-accent">
+          {{ image.title }}
+        </h3>
+        <span
+          v-if="favoriteCount > 0"
+          class="mt-0.5 flex shrink-0 items-center gap-1 font-mono text-[10px] tabular text-muted"
+        >
+          <AppIcon name="bookmark" :size="11" :filled="favorited" />
+          {{ favoriteCount }}
+        </span>
+      </div>
+
+      <div class="mt-2 flex items-center justify-between gap-2">
+        <RouterLink
           :to="`/users/${image.userId}`"
-          class="text-white/90 hover:text-white no-underline truncate transition-colors"
+          class="flex min-w-0 items-center gap-1.5 text-[11px] text-muted no-underline transition hover:text-ink"
           @click.stop
         >
-          {{ image.user?.username || '匿名' }}
-        </router-link>
-        <div class="flex items-center gap-2.5 shrink-0">
-          <span>❤️ {{ image.likeCount }}</span>
-          <span>⬇ {{ image.downloadCount }}</span>
+          <UiAvatar :src="image.user?.avatarUrl" :name="image.user?.username" :size="18" />
+          <span class="truncate">{{ image.user?.username || '匿名' }}</span>
+        </RouterLink>
+        <div class="flex shrink-0 items-center gap-2.5 font-mono text-[10px] tabular text-muted">
+          <span class="flex items-center gap-0.5"><AppIcon name="heart" :size="11" />{{ image.likeCount }}</span>
+          <span class="flex items-center gap-0.5"><AppIcon name="eye" :size="11" />{{ image.viewCount }}</span>
         </div>
       </div>
-    </div>
 
-    <!-- 标题（hover 时从底部滑出） -->
-    <div class="absolute inset-x-0 bottom-0 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none">
-      <div class="mx-2 mb-2 px-2 py-1 rounded-md bg-black/75 backdrop-blur-sm">
-        <p class="text-xs text-white truncate">{{ image.title }}</p>
+      <div v-if="tags.length" class="mt-2 flex flex-wrap gap-1">
+        <RouterLink
+          v-for="tag in tags"
+          :key="tag.id"
+          :to="`/tags/${encodeURIComponent(tag.slug)}`"
+          class="n-tag !py-0.5 !text-[9px]"
+          @click.stop
+        >
+          #{{ tag.name }}
+        </RouterLink>
       </div>
     </div>
-
-    <!-- 就地做表情包：把「用图」这件事铺到每一个浏览入口上。
-         移动端没有 hover，所以小屏常驻、大屏才随 hover 出现。
-         注意卡片的根节点是 <router-link>，这里必须 @click.stop，否则会跟着跳详情页。 -->
-    <router-link
-      :to="`/studio?image=${image.id}`"
-      class="absolute top-2 right-2 px-2 py-1 rounded-full text-[11px] font-semibold no-underline bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950 shadow-md transition-all duration-300 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 hover:scale-105"
-      title="用这张做表情包"
-      @click.stop
-    >
-      ✨ 做表情包
-    </router-link>
-  </router-link>
+  </article>
 </template>

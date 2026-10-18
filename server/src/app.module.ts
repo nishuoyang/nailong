@@ -16,6 +16,11 @@ import { UploadModule } from './upload/upload.module'
 import { LikesModule } from './likes/likes.module'
 import { AdminModule } from './admin/admin.module'
 import { SettingsModule } from './settings/settings.module'
+import { CommentsModule } from './comments/comments.module'
+import { FavoritesModule } from './favorites/favorites.module'
+import { CollectionsModule } from './collections/collections.module'
+import { FollowsModule } from './follows/follows.module'
+import { TagsModule } from './tags/tags.module'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard'
 import { RolesGuard } from './common/guards/roles.guard'
 import { ResponseInterceptor } from './common/interceptors/response.interceptor'
@@ -113,6 +118,11 @@ const staticImports = existsSync(clientDistPath)
     LikesModule,
     AdminModule,
     SettingsModule,
+    CommentsModule,
+    FavoritesModule,
+    CollectionsModule,
+    FollowsModule,
+    TagsModule,
     ...staticImports,
   ],
   controllers: [AppController],

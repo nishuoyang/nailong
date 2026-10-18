@@ -28,8 +28,11 @@ export class UsersController {
 
   @Public()
   @Get(':id')
-  async getPublicProfile(@Param('id') id: string) {
-    return this.usersService.getPublicProfile(id)
+  async getPublicProfile(
+    @Param('id') id: string,
+    @CurrentUser() viewer?: { id: string },
+  ) {
+    return this.usersService.getPublicProfile(id, viewer?.id)
   }
 
   @UseGuards(JwtAuthGuard)
@@ -56,8 +59,9 @@ export class UsersController {
   async findAll(
     @Query() query: PaginationDto,
     @Query('bioStatus') bioStatus?: string,
+    @Query('search') search?: string,
   ) {
-    return this.usersService.findAll(query.page, query.size, bioStatus)
+    return this.usersService.findAll(query.page, query.size, bioStatus, search)
   }
 
   // 管理员编辑用户

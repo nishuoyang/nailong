@@ -37,6 +37,7 @@ export class UploadController {
     @Body('description') description?: string,
     @Body('categoryIds') categoryIds?: string,
     @Body('section') section?: string,
+    @Body('tags') tags?: string,
   ) {
     let ids: string[] | undefined
     if (categoryIds) {
@@ -47,6 +48,6 @@ export class UploadController {
         // categoryIds 格式无效，忽略
       }
     }
-    return this.uploadService.uploadImage(file, user.id, title, description, ids, section)
+    return this.uploadService.uploadImage(file, user.id, title, description, ids, section, tags)
   }
 }

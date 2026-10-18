@@ -112,12 +112,15 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     page?: number
     size?: number
     category?: string
+    tag?: string
+    userId?: string
     search?: string
-    sort?: 'latest' | 'popular' | 'downloads'
+    sort?: 'latest' | 'popular' | 'downloads' | 'views'
+    range?: 'week' | 'month' | 'all'
   }) {
     const page = parsePage(params.page)
     const size = parseSize(params.size)
-    const { category, search, sort = 'latest' } = params
+    const { category, tag, userId, search, sort = 'latest', range } = params
 
     const where: Prisma.ImageWhereInput = {
       status: 'approved',
@@ -130,10 +133,28 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    if (tag) {
+      where.tags = { some: { tag: { slug: tag } } }
+    }
+
+    if (userId) {
+      where.userId = userId
+    }
+
+    if (range && range !== 'all') {
+      const since = new Date()
+      since.setDate(since.getDate() - (range === 'week' ? 7 : 30))
+      where.createdAt = { gte: since }
+    }
+
     if (search) {
+      const q = search.trim()
+      // Title first, then description and tag names. Prisma has no relevance
+      // ranking on SQLite, so orderBy below stays stable and predictable.
       where.OR = [
-        { title: { contains: search } },
-        { description: { contains: search } },
+        { title: { contains: q } },
+        { description: { contains: q } },
+        { tags: { some: { tag: { name: { contains: q } } } } },
       ]
     }
 
@@ -142,7 +163,9 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
         ? { likeCount: 'desc' }
         : sort === 'downloads'
           ? { downloadCount: 'desc' }
-          : { createdAt: 'desc' }
+          : sort === 'views'
+            ? { viewCount: 'desc' }
+            : { createdAt: 'desc' }
 
     const [raw, total] = await Promise.all([
       this.prisma.image.findMany({
@@ -150,6 +173,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
         include: {
           user: { select: { id: true, username: true, avatarUrl: true } },
           categories: { include: { category: true } },
+          tags: { include: { tag: true } },
         },
         orderBy,
         skip: (page - 1) * size,
@@ -158,7 +182,10 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
       this.prisma.image.count({ where }),
     ])
 
-    const data = raw.map(flattenCategories)
+    const data = raw.map((image) => ({
+      ...flattenCategories(image),
+      tags: image.tags.map((t) => t.tag),
+    }))
 
     return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 } }
   }
@@ -169,6 +196,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
       include: {
         user: { select: { id: true, username: true, avatarUrl: true } },
         categories: { include: { category: true } },
+        tags: { include: { tag: true } },
       },
     })
 
@@ -188,18 +216,126 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     await this.redisService.hincrby(VIEW_COUNT_HASH, id, 1)
 
     let isLiked = false
+    let isFavorited = false
     if (userId) {
-      const like = await this.prisma.like.findUnique({
-        where: { userId_imageId: { userId, imageId: id } },
-      })
+      const [like, favorite] = await Promise.all([
+        this.prisma.like.findUnique({
+          where: { userId_imageId: { userId, imageId: id } },
+        }),
+        this.prisma.favorite.findUnique({
+          where: { userId_imageId: { userId, imageId: id } },
+        }),
+      ])
       isLiked = !!like
+      isFavorited = !!favorite
     }
 
     // 展示数 = 已落库值 + 尚未回写的增量。回写完成（哈希被清）后增量自然归零，
     // 长时间不刷新页面也不会看到虚高。
     const pending = await this.redisService.hget(VIEW_COUNT_HASH, id)
     const viewCount = image.viewCount + (pending ? Number(pending) : 0)
-    return flattenCategories({ ...image, viewCount, isLiked })
+    return {
+      ...flattenCategories(image),
+      tags: image.tags.map((t) => t.tag),
+      viewCount,
+      isLiked,
+      isFavorited,
+    }
+  }
+
+  /**
+   * Related images: shared tags first, then shared categories, then recent.
+   * Reads only approved rows; the detail page uses this as a quiet "more like this".
+   */
+  async related(id: string, limit = 8) {
+    const image = await this.prisma.image.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        section: true,
+        categories: { select: { categoryId: true } },
+        tags: { select: { tagId: true } },
+      },
+    })
+    if (!image) throw new NotFoundException('图片不存在')
+
+    const categoryIds = image.categories.map((c) => c.categoryId)
+    const tagIds = image.tags.map((t) => t.tagId)
+    const or: Prisma.ImageWhereInput[] = []
+    if (tagIds.length) or.push({ tags: { some: { tagId: { in: tagIds } } } })
+    if (categoryIds.length) or.push({ categories: { some: { categoryId: { in: categoryIds } } } })
+
+    const base: Prisma.ImageWhereInput = {
+      id: { not: id },
+      status: 'approved',
+      section: image.section,
+      ...(or.length ? { OR: or } : {}),
+    }
+
+    let rows = await this.prisma.image.findMany({
+      where: base,
+      orderBy: [{ likeCount: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+      include: {
+        user: { select: { id: true, username: true, avatarUrl: true } },
+        categories: { include: { category: true } },
+        tags: { include: { tag: true } },
+      },
+    })
+
+    if (rows.length < limit) {
+      const seen = new Set(rows.map((row) => row.id))
+      const fallback = await this.prisma.image.findMany({
+        where: { id: { not: id }, status: 'approved', section: image.section },
+        orderBy: { createdAt: 'desc' },
+        take: limit * 2,
+        include: {
+          user: { select: { id: true, username: true, avatarUrl: true } },
+          categories: { include: { category: true } },
+          tags: { include: { tag: true } },
+        },
+      })
+      rows = [...rows, ...fallback.filter((row) => !seen.has(row.id))].slice(0, limit)
+    }
+
+    return rows.map((row) => ({
+      ...flattenCategories(row),
+      tags: row.tags.map((t) => t.tag),
+    }))
+  }
+
+  /** Public counters for the landing page. Cached briefly: they are decorative, not billing. */
+  private statsCache: { at: number; value: any } | null = null
+
+  async stats() {
+    if (this.statsCache && Date.now() - this.statsCache.at < 30_000) return this.statsCache.value
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const [images, users, comments, collections, aggregates, todayUploads] = await Promise.all([
+      this.prisma.image.count({ where: { status: 'approved' } }),
+      this.prisma.user.count(),
+      this.prisma.comment.count(),
+      this.prisma.collection.count({ where: { isPublic: true } }),
+      this.prisma.image.aggregate({
+        where: { status: 'approved' },
+        _sum: { likeCount: true, downloadCount: true, viewCount: true },
+      }),
+      this.prisma.image.count({ where: { createdAt: { gte: today } } }),
+    ])
+
+    const value = {
+      images,
+      users,
+      comments,
+      collections,
+      likes: aggregates._sum.likeCount ?? 0,
+      downloads: aggregates._sum.downloadCount ?? 0,
+      views: aggregates._sum.viewCount ?? 0,
+      todayUploads,
+    }
+    this.statsCache = { at: Date.now(), value }
+    return value
   }
 
   // 其他推荐：section='other' 的 approved 图片
@@ -218,6 +354,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
         include: {
           user: { select: { id: true, username: true, avatarUrl: true } },
           categories: { include: { category: true } },
+          tags: { include: { tag: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * size,
@@ -226,7 +363,10 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
       this.prisma.image.count({ where }),
     ])
 
-    const data = raw.map(flattenCategories)
+    const data = raw.map((image) => ({
+      ...flattenCategories(image),
+      tags: image.tags.map((t) => t.tag),
+    }))
     return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 } }
   }
 
@@ -246,6 +386,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
         include: {
           user: { select: { id: true, username: true, avatarUrl: true } },
           categories: { include: { category: true } },
+          tags: { include: { tag: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * size,
@@ -254,7 +395,10 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
       this.prisma.image.count({ where }),
     ])
 
-    const data = raw.map(flattenCategories)
+    const data = raw.map((image) => ({
+      ...flattenCategories(image),
+      tags: image.tags.map((t) => t.tag),
+    }))
     return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 } }
   }
 
@@ -277,9 +421,14 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
         id: true,
         title: true,
         thumbnailUrl: true,
-        url: true,
+        thumbnailSmUrl: true,
+        width: true,
+        height: true,
+        blurDataUrl: true,
+        dominantColor: true,
         likeCount: true,
-        user: { select: { id: true, username: true } },
+        commentCount: true,
+        user: { select: { id: true, username: true, avatarUrl: true } },
       },
       skip,
       orderBy: { createdAt: 'desc' },
@@ -300,23 +449,33 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
   }
 
   // 每周排行榜：按点赞数排名，过去 7 天的 approved 图片
-  async getLeaderboard(limit = 10) {
-    const weekAgo = new Date()
-    weekAgo.setDate(weekAgo.getDate() - 7)
+  async getLeaderboard(limit = 10, range: 'week' | 'month' | 'all' = 'week') {
+    const since = new Date()
+    if (range !== 'all') {
+      since.setDate(since.getDate() - (range === 'week' ? 7 : 30))
+    }
 
     const images = await this.prisma.image.findMany({
       where: {
         status: 'approved',
         section: 'general',
-        createdAt: { gte: weekAgo },
+        ...(range === 'all' ? {} : { createdAt: { gte: since } }),
       },
       select: {
         id: true,
         title: true,
         likeCount: true,
+        viewCount: true,
+        downloadCount: true,
+        commentCount: true,
         thumbnailUrl: true,
+        thumbnailSmUrl: true,
+        blurDataUrl: true,
+        dominantColor: true,
+        width: true,
+        height: true,
         url: true,
-        user: { select: { id: true, username: true } },
+        user: { select: { id: true, username: true, avatarUrl: true } },
       },
       orderBy: { likeCount: 'desc' },
       take: limit,
@@ -331,8 +490,10 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getCategories() {
-    return this.prisma.category.findMany({
+    const rows = await this.prisma.category.findMany({
       orderBy: { name: 'asc' },
+      include: { _count: { select: { images: true } } },
     })
+    return rows.map(({ _count, ...category }) => ({ ...category, count: _count.images }))
   }
 }

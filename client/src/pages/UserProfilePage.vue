@@ -1,85 +1,171 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import request from '@/utils/request'
-import ImageCard from '@/components/common/ImageCard.vue'
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { getUserImages, getUserProfile, getUserCollections, toggleFollow, type CollectionSummary } from '@/api/social'
+import type { ImageItem } from '@/api/images'
+import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+import ProfileHeader from '@/components/common/ProfileHeader.vue'
+import ImageGrid from '@/components/common/ImageGrid.vue'
+import CollectionCard from '@/components/common/CollectionCard.vue'
+import UiEmpty from '@/components/ui/UiEmpty.vue'
+import AppIcon from '@/components/ui/AppIcon.vue'
 
 const route = useRoute()
-// 必须用 computed：/users/A → /users/B 会复用同一个组件实例（App.vue 的 router-view 没有 :key），
-// 而卡片上的作者链接正好会产生这种跳转，直接读 route.params.id 会一直是旧 id。
-const userId = computed(() => route.params.id as string)
-const page = ref(1)
+const router = useRouter()
+const auth = useAuthStore()
+const toast = useToast()
+const queryClient = useQueryClient()
+
+const id = computed(() => route.params.id as string)
+const tab = computed(() => ((route.query.tab as string) === 'collections' ? 'collections' : 'works'))
 
 const { data: profile, isLoading: profileLoading } = useQuery({
-  queryKey: ['user-profile', userId],
-  queryFn: () => request.get(`/users/${userId.value}`).then((r) => r.data.data),
+  queryKey: ['user-profile', id],
+  queryFn: () => getUserProfile(id.value).then((r) => r.data.data),
 })
 
-const { data: images, isLoading: imagesLoading } = useQuery({
-  queryKey: ['user-images', userId, page],
-  queryFn: () =>
-    request
-      .get(`/users/${userId.value}/images`, { params: { page: page.value, size: 20 } })
-      .then((r) => ({ data: r.data.data, meta: r.data.meta })),
-  placeholderData: keepPreviousData,
+const { data: imagePages, isLoading: imagesLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
+  queryKey: computed(() => ['user-images', id.value]),
+  queryFn: ({ pageParam }) =>
+    getUserImages(id.value, pageParam as number, 24).then((r) => ({ ...r.data, page: pageParam as number })),
+  initialPageParam: 1,
+  getNextPageParam: (last) => (last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined),
 })
+
+const { data: collections, isLoading: collectionsLoading } = useQuery({
+  queryKey: ['user-collections', id],
+  queryFn: () => getUserCollections(id.value).then((r) => r.data.data),
+})
+
+const images = computed<ImageItem[]>(() => imagePages.value?.pages.flatMap((page) => page.data) ?? [])
+const collectionList = computed<CollectionSummary[]>(() => collections.value ?? [])
+
+const followMutation = useMutation({
+  mutationFn: () => toggleFollow(id.value),
+  onSuccess: (res) => {
+    queryClient.setQueryData(['user-profile', id.value], (old: any) =>
+      old
+        ? { ...old, isFollowing: res.data.data.following, followerCount: res.data.data.followerCount }
+        : old,
+    )
+    toast.success(res.data.data.following ? `已关注 ${profile.value?.username}` : '已取消关注')
+  },
+  onError: () => toast.error('操作失败，稍后再试'),
+})
+
+function handleFollow() {
+  if (!auth.isLoggedIn) {
+    toast.warning('登录后才能关注')
+    router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
+  }
+  followMutation.mutate()
+}
+
+async function copyProfile() {
+  try {
+    await navigator.clipboard.writeText(window.location.href)
+    toast.success('主页链接已复制')
+  } catch {
+    toast.warning('复制失败')
+  }
+}
 </script>
 
 <template>
-  <div class="max-w-4xl mx-auto px-4 py-8">
-    <!-- Profile Header -->
-    <div v-if="profileLoading" class="text-center py-20">
-      <p class="text-gray-400">加载中...</p>
+  <div v-if="profileLoading" class="n-container py-16">
+    <div class="flex items-center gap-6">
+      <div class="n-skeleton h-24 w-24 rounded-[28px]" />
+      <div class="space-y-3">
+        <div class="n-skeleton h-10 w-56 rounded-full" />
+        <div class="n-skeleton h-4 w-72 rounded-full" />
+      </div>
     </div>
+  </div>
 
-    <div v-else-if="!profile" class="text-center py-20">
-      <p class="text-gray-400">用户不存在</p>
-    </div>
+  <div v-else-if="!profile" class="n-container py-24">
+    <UiEmpty title="找不到这个用户" description="可能改名了，或者从来没有存在过。" icon="user">
+      <RouterLink to="/" class="n-btn n-btn-primary no-underline">回首页</RouterLink>
+    </UiEmpty>
+  </div>
 
-    <template v-else>
-      <div class="bg-white rounded-xl shadow-sm p-8 mb-8">
-        <div class="flex items-start gap-6">
-          <div class="w-20 h-20 rounded-full bg-blue-100 flex items-center justify-center text-3xl shrink-0">
-            {{ profile.username?.charAt(0)?.toUpperCase() || '?' }}
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-3 mb-1">
-              <h1 class="text-xl font-bold">{{ profile.username }}</h1>
-              <el-tag v-if="profile.role === 'admin'" size="small" type="danger">管理员</el-tag>
-            </div>
-            <p class="text-gray-500 text-sm mb-2">
-              加入于 {{ new Date(profile.createdAt).toLocaleDateString('zh-CN') }}
-            </p>
-            <p class="text-gray-600">{{ profile.bio }}</p>
-          </div>
+  <div v-else>
+    <ProfileHeader
+      :name="profile.username"
+      :avatar-url="profile.avatarUrl"
+      :bio="profile.bio"
+      :role="profile.role"
+      :joined-at="profile.createdAt"
+      :works="profile.imageCount"
+      :followers="profile.followerCount"
+      :following="profile.followingCount"
+      :likes="profile.totalLikes"
+    >
+      <template #actions>
+        <template v-if="profile.isSelf">
+          <RouterLink to="/profile" class="n-btn n-btn-primary no-underline">
+            <AppIcon name="edit" :size="14" /> 编辑资料
+          </RouterLink>
+        </template>
+        <template v-else>
+          <button
+            class="n-btn"
+            :class="profile.isFollowing ? 'n-btn-outline' : 'n-btn-primary'"
+            :disabled="followMutation.isPending.value"
+            @click="handleFollow"
+          >
+            <AppIcon :name="profile.isFollowing ? 'check' : 'plus'" :size="15" />
+            {{ profile.isFollowing ? '已关注' : '关注' }}
+          </button>
+        </template>
+        <button class="n-btn n-btn-ghost" @click="copyProfile">
+          <AppIcon name="share" :size="15" /> 分享
+        </button>
+      </template>
+    </ProfileHeader>
+
+    <div class="n-container py-8 sm:py-10">
+      <div class="mb-8 flex items-center gap-1 border-b border-line">
+        <button
+          class="relative -mb-px flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition"
+          :class="tab === 'works' ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink'"
+          @click="router.replace({ query: { ...route.query, tab: undefined } })"
+        >
+          作品 <span class="font-mono text-[10px] opacity-50">{{ profile.imageCount }}</span>
+        </button>
+        <button
+          class="relative -mb-px flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition"
+          :class="tab === 'collections' ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink'"
+          @click="router.replace({ query: { ...route.query, tab: 'collections' } })"
+        >
+          收藏夹 <span class="font-mono text-[10px] opacity-50">{{ collectionList.length }}</span>
+        </button>
+      </div>
+
+      <template v-if="tab === 'works'">
+        <ImageGrid :images="images" :loading="imagesLoading" :skeleton-count="8">
+          <template #empty>
+            <UiEmpty title="还没有作品" description="这位创作者还在酝酿第一张图。" icon="image" />
+          </template>
+        </ImageGrid>
+        <div v-if="images.length && hasNextPage" class="mt-10 flex justify-center">
+          <button class="n-btn n-btn-outline n-btn-lg min-w-44" :disabled="isFetchingNextPage" @click="fetchNextPage()">
+            {{ isFetchingNextPage ? '加载中' : '加载更多' }}
+          </button>
         </div>
-      </div>
+      </template>
 
-      <!-- User's Images -->
-      <h2 class="text-lg font-bold mb-4">{{ profile.username }} 的图片</h2>
-
-      <div v-if="imagesLoading" class="text-center py-10">
-        <p class="text-gray-400">加载中...</p>
-      </div>
-
-      <div v-else-if="!images?.data?.length" class="text-center py-10 bg-white rounded-xl">
-        <p class="text-gray-400">还没有上传过图片</p>
-      </div>
-
-      <div v-else class="columns-2 md:columns-3 gap-2 [column-fill:balance]">
-        <ImageCard v-for="image in images.data" :key="image.id" :image="image" class="mb-2 break-inside-avoid" />
-      </div>
-
-      <div v-if="images?.meta && images.meta.totalPages > 1" class="flex justify-center mt-6">
-        <el-pagination
-          v-model:current-page="page"
-          :page-size="20"
-          :total="images.meta.total"
-          background
-          layout="prev, pager, next"
-        />
-      </div>
-    </template>
+      <template v-else>
+        <div v-if="collectionsLoading" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div v-for="i in 3" :key="i" class="n-skeleton h-64 rounded-[24px]" />
+        </div>
+        <div v-else-if="collectionList.length" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <CollectionCard v-for="collection in collectionList" :key="collection.id" :collection="collection" />
+        </div>
+        <UiEmpty v-else title="还没有公开收藏夹" description="收藏夹可以是私密的，主人没有公开的话就看不到。" icon="folder" />
+      </template>
+    </div>
   </div>
 </template>

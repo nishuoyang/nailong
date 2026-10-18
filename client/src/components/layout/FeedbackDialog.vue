@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import UiModal from '@/components/ui/UiModal.vue'
+import UiButton from '@/components/ui/UiButton.vue'
+import { useToast } from '@/composables/useToast'
 
-// 意见反馈弹窗（待办 #4 懒加载，2026-09-12）
-//
-// 从 AppLayout.vue 抽出：AppLayout 是每个页面都常驻的布局组件，内联弹窗会让
-// el-dialog/el-form/el-form-item/el-input/el-button 全部进入首屏 eager 图。
-// 独立成块 + defineAsyncComponent 后，这五个组件只在用户点开「📧」时才下载。
-// 本组件通过 v-model 与父组件共享开关状态，自己的表单状态不外泄。
 defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>()
 
+const toast = useToast()
 const feedback = ref({ subject: '', message: '' })
 
 function close() {
@@ -18,38 +16,36 @@ function close() {
 }
 
 function submitFeedback() {
-  const subject = encodeURIComponent(`[奶龙反馈] ${feedback.value.subject}`)
+  if (!feedback.value.message.trim()) {
+    toast.warning('先写点内容再发送吧')
+    return
+  }
+  const subject = encodeURIComponent(`[奶龙反馈] ${feedback.value.subject || '站点建议'}`)
   const body = encodeURIComponent(feedback.value.message)
   window.open(`mailto:nishuoyang2023@163.com?subject=${subject}&body=${body}`, '_blank')
+  toast.success('已打开邮件客户端')
   close()
 }
 </script>
 
 <template>
-  <el-dialog
-    :model-value="modelValue"
-    title="意见反馈"
-    width="480px"
-    @update:model-value="close"
-  >
-    <el-form label-position="top">
-      <el-form-item label="主题">
-        <el-input v-model="feedback.subject" placeholder="请输入反馈主题" maxlength="100" />
-      </el-form-item>
-      <el-form-item label="内容">
-        <el-input
-          v-model="feedback.message"
-          type="textarea"
-          :rows="5"
-          placeholder="请描述您的意见或建议..."
-          maxlength="2000"
-          show-word-limit
-        />
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="close">取消</el-button>
-      <el-button type="primary" @click="submitFeedback">发送反馈</el-button>
-    </template>
-  </el-dialog>
+  <UiModal :model-value="modelValue" title="意见反馈" width="520px" @update:model-value="emit('update:modelValue', $event)">
+    <p class="mb-5 text-sm leading-relaxed text-muted">
+      遇到问题、想要新功能，或者只是想夸夸奶龙，都可以写在这里。会直接发到站长的邮箱。
+    </p>
+    <label class="mb-1.5 block text-xs font-medium text-ink-2">主题</label>
+    <input v-model="feedback.subject" class="n-input mb-4" placeholder="一句话概括" maxlength="100" />
+    <label class="mb-1.5 block text-xs font-medium text-ink-2">内容</label>
+    <textarea
+      v-model="feedback.message"
+      rows="5"
+      maxlength="2000"
+      class="w-full resize-none rounded-2xl border border-line bg-surface px-4 py-3 text-sm text-ink outline-none transition focus:border-ink"
+      placeholder="请描述你的想法…"
+    />
+    <div class="mt-5 flex justify-end gap-2">
+      <UiButton variant="ghost" @click="close">取消</UiButton>
+      <UiButton variant="primary" @click="submitFeedback">发送反馈</UiButton>
+    </div>
+  </UiModal>
 </template>

@@ -18,11 +18,17 @@ function parseSize(size?: number): number {
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(page = 1, size = 20, bioStatus?: string) {
+  async findAll(page = 1, size = 20, bioStatus?: string, search?: string) {
     const pageNum = parsePage(page)
     const sizeNum = parseSize(size)
     const where: any = {}
     if (bioStatus) where.bioStatus = bioStatus
+    if (search) {
+      where.OR = [
+        { username: { contains: search } },
+        { email: { contains: search } },
+      ]
+    }
     const [data, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
@@ -83,7 +89,7 @@ export class UsersService {
     return user
   }
 
-  async getPublicProfile(id: string) {
+  async getPublicProfile(id: string, viewerId?: string) {
     const user = await this.prisma.user.findUnique({
       where: { id },
       select: {
@@ -98,9 +104,33 @@ export class UsersService {
     })
     if (!user) throw new NotFoundException('用户不存在')
 
+    const [imageCount, followerCount, followingCount, likeAgg, isFollowing] = await Promise.all([
+      this.prisma.image.count({ where: { userId: id, status: 'approved' } }),
+      this.prisma.follow.count({ where: { followingId: id } }),
+      this.prisma.follow.count({ where: { followerId: id } }),
+      this.prisma.image.aggregate({
+        where: { userId: id, status: 'approved' },
+        _sum: { likeCount: true, downloadCount: true, viewCount: true },
+      }),
+      viewerId && viewerId !== id
+        ? this.prisma.follow.findUnique({
+            where: { followerId_followingId: { followerId: viewerId, followingId: id } },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+    ])
+
     return {
       ...user,
       bio: user.bio && user.bioStatus === 'approved' ? user.bio : '这个人很懒，什么也没留下',
+      imageCount,
+      followerCount,
+      followingCount,
+      totalLikes: likeAgg._sum.likeCount ?? 0,
+      totalDownloads: likeAgg._sum.downloadCount ?? 0,
+      totalViews: likeAgg._sum.viewCount ?? 0,
+      isFollowing: Boolean(isFollowing),
+      isSelf: viewerId === id,
     }
   }
 
@@ -132,6 +162,7 @@ export class UsersService {
         where: { userId, status: 'approved' },
         include: {
           categories: { include: { category: true } },
+          tags: { include: { tag: true } },
           user: { select: { id: true, username: true, avatarUrl: true } },
         },
         orderBy: { createdAt: 'desc' },
@@ -140,7 +171,14 @@ export class UsersService {
       }),
       this.prisma.image.count({ where: { userId, status: 'approved' } }),
     ])
-    return { data, meta: { page: pageNum, size: sizeNum, total, totalPages: Math.ceil(total / sizeNum) || 1 } }
+    return {
+      data: data.map((image) => ({
+        ...image,
+        categories: image.categories.map((c) => c.category),
+        tags: image.tags.map((t) => t.tag),
+      })),
+      meta: { page: pageNum, size: sizeNum, total, totalPages: Math.ceil(total / sizeNum) || 1 },
+    }
   }
 
   async approveBio(userId: string) {
@@ -161,6 +199,7 @@ export class UsersService {
         where: { userId },
         include: {
           categories: { include: { category: true } },
+          tags: { include: { tag: true } },
           user: { select: { id: true, username: true, avatarUrl: true } },
         },
         orderBy: { createdAt: 'desc' },
@@ -169,6 +208,13 @@ export class UsersService {
       }),
       this.prisma.image.count({ where: { userId } }),
     ])
-    return { data, meta: { page: pageNum, size: sizeNum, total, totalPages: Math.ceil(total / sizeNum) || 1 } }
+    return {
+      data: data.map((image) => ({
+        ...image,
+        categories: image.categories.map((c) => c.category),
+        tags: image.tags.map((t) => t.tag),
+      })),
+      meta: { page: pageNum, size: sizeNum, total, totalPages: Math.ceil(total / sizeNum) || 1 },
+    }
   }
 }

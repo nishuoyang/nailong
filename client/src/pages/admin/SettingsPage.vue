@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import request from '@/utils/request'
-// ElMessage 由 unplugin-auto-import 按需注入（见 vite.config.ts）
-import ProfileLayout from '@/components/layout/ProfileLayout.vue'
+import { useToast } from '@/composables/useToast'
+import AdminShell from '@/components/layout/AdminShell.vue'
+import AppIcon from '@/components/ui/AppIcon.vue'
 
+const toast = useToast()
 const queryClient = useQueryClient()
 
 const { data: settings, isLoading } = useQuery({
@@ -16,60 +18,81 @@ const mutation = useMutation({
     request.patch('/admin/settings', data),
   onSuccess: () => {
     queryClient.invalidateQueries({ queryKey: ['admin-settings'] })
-    ElMessage.success('设置已更新')
+    toast.success('设置已保存')
   },
-  onError: (err: any) => ElMessage.error(err.response?.data?.message || '保存失败'),
+  onError: (err: any) => toast.error(err.response?.data?.message || '保存失败'),
 })
 
-const menuItems = [
-  { label: '管理概览', to: '/admin' },
-  { label: '图片管理', to: '/admin/images' },
-  { label: '用户管理', to: '/admin/users' },
-  { label: 'Bio 审核', to: '/admin/bio-review' },
-  { label: '分类管理', to: '/admin/categories' },
-  { label: '设置', to: '/admin/settings' },
-]
+function toggleRegistration() {
+  mutation.mutate({ registrationOpen: !settings.value?.registrationOpen })
+}
+
+function toggleLogin() {
+  mutation.mutate({ loginRestricted: !settings.value?.loginRestricted })
+}
 </script>
 
 <template>
-  <ProfileLayout title="设置">
-    <template #menu>
-      <router-link
-        v-for="item in menuItems"
-        :key="item.to"
-        :to="item.to"
-        class="px-3 py-2 rounded-lg text-sm no-underline transition-colors"
-        :class="$route.path === item.to ? 'bg-orange-50 text-orange-600 font-medium' : 'text-gray-600 hover:bg-gray-50'"
-      >
-        {{ item.label }}
-      </router-link>
-    </template>
-
-    <div v-if="isLoading" class="text-center py-20"><p class="text-gray-400">加载中...</p></div>
-
-    <div v-else class="bg-white rounded-xl shadow-sm p-6 space-y-2">
-      <div class="flex items-center justify-between py-4 border-b border-gray-100">
-        <div>
-          <h3 class="font-medium text-gray-800">关闭注册</h3>
-          <p class="text-sm text-gray-400 mt-1">开启后，新用户无法注册账号</p>
-        </div>
-        <el-switch
-          :model-value="settings?.registrationOpen === false"
-          :loading="mutation.isPending.value"
-          @change="(val: string | number | boolean) => mutation.mutate({ registrationOpen: !val })"
-        />
-      </div>
-      <div class="flex items-center justify-between py-4">
-        <div>
-          <h3 class="font-medium text-gray-800">限制登录</h3>
-          <p class="text-sm text-gray-400 mt-1">开启后，仅管理员账号可以登录</p>
-        </div>
-        <el-switch
-          :model-value="settings?.loginRestricted === true"
-          :loading="mutation.isPending.value"
-          @change="(val: string | number | boolean) => mutation.mutate({ loginRestricted: Boolean(val) })"
-        />
-      </div>
+  <AdminShell title="站点设置" eyebrow="Settings" description="应急开关会立刻生效，保存在数据库里，不依赖缓存。">
+    <div v-if="isLoading" class="space-y-3">
+      <div v-for="i in 2" :key="i" class="n-skeleton h-28 rounded-[24px]" />
     </div>
-  </ProfileLayout>
+
+    <div v-else class="space-y-3">
+      <section class="flex flex-col gap-4 rounded-[24px] border border-line bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-start gap-3">
+          <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-jade/10 text-jade"><AppIcon name="users" :size="18" /></span>
+          <div>
+            <p class="text-sm font-semibold text-ink">开放注册</p>
+            <p class="mt-1 text-xs leading-relaxed text-muted">关闭后，新用户无法注册。已有用户不受影响。</p>
+            <p class="mt-2 font-mono text-[9px] uppercase tracking-[0.14em]" :class="settings?.registrationOpen ? 'text-jade' : 'text-accent'">
+              {{ settings?.registrationOpen ? '● Registration open' : '● Registration closed' }}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          :aria-checked="settings?.registrationOpen"
+          :disabled="mutation.isPending.value"
+          class="relative h-8 w-14 shrink-0 rounded-full transition"
+          :class="settings?.registrationOpen ? 'bg-jade' : 'bg-line-strong'"
+          @click="toggleRegistration"
+        >
+          <span class="absolute top-1 h-6 w-6 rounded-full bg-white shadow transition-all" :class="settings?.registrationOpen ? 'left-7' : 'left-1'" />
+        </button>
+      </section>
+
+      <section class="flex flex-col gap-4 rounded-[24px] border border-line bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-start gap-3">
+          <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/10 text-accent"><AppIcon name="lock" :size="18" /></span>
+          <div>
+            <p class="text-sm font-semibold text-ink">限制登录</p>
+            <p class="mt-1 text-xs leading-relaxed text-muted">开启后，仅管理员账号可以登录。适合维护或应急状态。</p>
+            <p class="mt-2 font-mono text-[9px] uppercase tracking-[0.14em]" :class="settings?.loginRestricted ? 'text-accent' : 'text-muted'">
+              {{ settings?.loginRestricted ? '● Admin only' : '● Everyone can sign in' }}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          :aria-checked="settings?.loginRestricted"
+          :disabled="mutation.isPending.value"
+          class="relative h-8 w-14 shrink-0 rounded-full transition"
+          :class="settings?.loginRestricted ? 'bg-accent' : 'bg-line-strong'"
+          @click="toggleLogin"
+        >
+          <span class="absolute top-1 h-6 w-6 rounded-full bg-white shadow transition-all" :class="settings?.loginRestricted ? 'left-7' : 'left-1'" />
+        </button>
+      </section>
+
+      <section class="rounded-[24px] border border-dashed border-line px-5 py-4">
+        <p class="flex items-start gap-2 text-[11px] leading-relaxed text-muted">
+          <AppIcon name="info" :size="14" class="mt-0.5 shrink-0 text-accent" />
+          设置写入数据库 Setting 表，Redis 不可用或重启都不会让开关静默恢复默认值。修改会立即影响登录与注册接口。
+        </p>
+      </section>
+    </div>
+  </AdminShell>
 </template>

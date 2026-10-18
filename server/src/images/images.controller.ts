@@ -47,10 +47,28 @@ export class ImagesController {
   async findAll(
     @Query() query: PaginationDto,
     @Query('category') category?: string,
+    @Query('tag') tag?: string,
+    @Query('userId') userId?: string,
     @Query('search') search?: string,
-    @Query('sort') sort?: 'latest' | 'popular' | 'downloads',
+    @Query('sort') sort?: 'latest' | 'popular' | 'downloads' | 'views',
+    @Query('range') range?: 'week' | 'month' | 'all',
   ) {
-    return this.imagesService.findAll({ page: query.page, size: query.size, category, search, sort })
+    return this.imagesService.findAll({
+      page: query.page,
+      size: query.size,
+      category,
+      tag,
+      userId,
+      search,
+      sort,
+      range,
+    })
+  }
+
+  @Public()
+  @Get('images/:id/related')
+  async related(@Param('id') id: string) {
+    return this.imagesService.related(id)
   }
 
   @Public()
@@ -113,8 +131,14 @@ export class ImagesController {
 
   @Public()
   @Get('leaderboard')
-  async getLeaderboard() {
-    return this.imagesService.getLeaderboard()
+  async getLeaderboard(@Query('range') range?: 'week' | 'month' | 'all') {
+    return this.imagesService.getLeaderboard(10, range ?? 'week')
+  }
+
+  @Public()
+  @Get('stats')
+  async stats() {
+    return this.imagesService.stats()
   }
 
   @Public()

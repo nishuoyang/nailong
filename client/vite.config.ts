@@ -1,30 +1,15 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
-import AutoImport from 'unplugin-auto-import/vite'
-import Components from 'unplugin-vue-components/vite'
-import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [
     vue(),
     tailwindcss(),
-    // ── Element Plus 按需引入 ──
-    // 全量引入（app.use(ElementPlus) + element-plus/dist/index.css）会让首屏
-    // 多出约 877 KB JS + 349 KB CSS，而全站只用到 19 个组件。这里改为按需：
-    //   Components  → 模板中的 <el-*> 自动解析并注入「组件 + 对应样式」
-    //   AutoImport  → 自动注入 ElMessage / ElMessageBox / ElNotification 等函数式 API
-    // 注意：main.ts 里不要再 app.use(ElementPlus)，也不要再引入全量 index.css。
-    // 生成的两个 d.ts 需要提交到仓库，否则 vue-tsc 在干净检出时会报未定义。
-    AutoImport({
-      resolvers: [ElementPlusResolver()],
-      dts: 'src/auto-imports.d.ts',
-    }),
-    Components({
-      resolvers: [ElementPlusResolver()],
-      dts: 'src/components.d.ts',
-    }),
+    // Element Plus has been fully replaced by the local UI kit (AppIcon / UiButton /
+    // UiModal / …). Keeping the resolver plugins would still install and scan the
+    // whole component library for nothing, so they were removed with it.
   ],
   resolve: {
     alias: {

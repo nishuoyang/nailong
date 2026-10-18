@@ -13,12 +13,28 @@ export class AdminController {
     private settingsService: SettingsService,
   ) {}
 
+  @Get('stats')
+  async stats() {
+    return this.adminService.stats()
+  }
+
   @Get('images')
   async getImages(
     @Query() query: PaginationDto,
     @Query('status') status?: string,
+    @Query('search') search?: string,
   ) {
-    return this.adminService.findAllImages({ page: query.page, size: query.size, status })
+    return this.adminService.findAllImages({ page: query.page, size: query.size, status, search })
+  }
+
+  @Get('comments')
+  async comments(@Query() query: PaginationDto, @Query('search') search?: string) {
+    return this.adminService.listComments({ page: query.page, size: query.size, search })
+  }
+
+  @Delete('comments/:id')
+  async deleteComment(@Param('id') id: string) {
+    return this.adminService.deleteComment(id)
   }
 
   @Patch('images/:id/status')
@@ -34,7 +50,14 @@ export class AdminController {
   @Patch('images/:id')
   async updateImage(
     @Param('id') id: string,
-    @Body() body: { title?: string; description?: string; categoryIds?: string[] },
+    @Body()
+    body: {
+      title?: string
+      description?: string
+      categoryIds?: string[]
+      tagNames?: string[]
+      section?: string
+    },
   ) {
     return this.adminService.updateImage(id, body)
   }

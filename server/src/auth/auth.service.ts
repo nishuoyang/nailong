@@ -1,9 +1,9 @@
 import {
   Injectable,
+  Logger,
   ConflictException,
   UnauthorizedException,
   BadRequestException,
-  ServiceUnavailableException,
 } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
@@ -14,7 +14,7 @@ import { RedisService } from '../redis/redis.service'
 import { SettingsService } from '../settings/settings.service'
 import { RegisterDto } from './dto/register.dto'
 import { LoginDto } from './dto/login.dto'
-import { randomBytes } from 'crypto'
+import { createHmac, randomBytes } from 'crypto'
 
 // 密码哈希强度（待办 #8，2026-09-12：cost 12 → 11）。
 // 本机实测 hash/compare：12 ≈ 203ms，11 ≈ 104ms（约 1.96 倍提速，仍高于 OWASP
@@ -28,6 +28,8 @@ const LOGIN_DECOY_HASH = '$2b$11$66KPuolmfVeW3c4Ya8Bl7eruyJ0YzRgwEkFtQ1zbW.AqZgT
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name)
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
@@ -47,15 +49,48 @@ export class AuthService {
     })
 
     const sessionId = randomBytes(16).toString('hex')
-    // 存 Redis，5 分钟过期，不区分大小写。
-    // 这里必须检查写入结果：写失败还返回 SVG 的话，用户填对了也永远验证不过，
-    // 表现为「验证码错误或已过期」，无从排查。直接明确报服务不可用。
+    // Primary path: Redis, 5 minutes, case-insensitive. The write result must be
+    // checked: returning an SVG whose answer was never stored would make every
+    // registration fail with "验证码错误", which is impossible to diagnose.
     const stored = await this.redisService.set(`captcha:${sessionId}`, captcha.text.toLowerCase(), 300)
-    if (!stored) {
-      throw new ServiceUnavailableException('验证码服务暂不可用，请稍后重试')
+    if (stored) {
+      return { svg: captcha.data, sessionId }
     }
 
-    return { svg: captcha.data, sessionId }
+    // Degraded path: Redis is down. Rather than disabling registration (and the
+    // whole site's only signup path), issue a short-lived signed challenge that
+    // carries an HMAC of the answer. The plaintext answer never leaves the server.
+    // Session ids are prefixed so register() can tell the two flows apart.
+    const token = await this.jwtService.signAsync(
+      { typ: 'captcha', h: this.captchaDigest(captcha.text) },
+      {
+        secret: this.configService.get<string>('JWT_SECRET', 'nailong-jwt-secret-dev-only'),
+        expiresIn: '5m',
+      },
+    )
+    this.logger.warn('Redis 不可用，验证码降级为签名挑战（注册仍可用）')
+    return { svg: captcha.data, sessionId: `jwt:${token}` }
+  }
+
+  private captchaDigest(value: string): string {
+    return createHmac('sha256', this.configService.get<string>('JWT_SECRET', 'nailong-jwt-secret-dev-only'))
+      .update(`captcha:${value.toLowerCase()}`)
+      .digest('hex')
+  }
+
+  private async verifyCaptcha(sessionId: string, answer: string): Promise<boolean> {
+    if (sessionId.startsWith('jwt:')) {
+      try {
+        const payload = this.jwtService.verify<{ typ?: string; h?: string }>(sessionId.slice(4), {
+          secret: this.configService.get<string>('JWT_SECRET', 'nailong-jwt-secret-dev-only'),
+        })
+        return payload.typ === 'captcha' && payload.h === this.captchaDigest(answer)
+      } catch {
+        return false
+      }
+    }
+    const stored = await this.redisService.get(`captcha:${sessionId}`)
+    return !!stored && stored === answer.toLowerCase()
   }
 
   async register(dto: RegisterDto) {
@@ -65,9 +100,8 @@ export class AuthService {
       throw new BadRequestException('网站暂未开放注册')
     }
 
-    // 验证码校验
-    const stored = await this.redisService.get(`captcha:${dto.captchaSessionId}`)
-    if (!stored || stored !== dto.captchaText.toLowerCase()) {
+    // 验证码校验：Redis 正常时走存储校验，Redis 故障时走签名挑战。
+    if (!(await this.verifyCaptcha(dto.captchaSessionId, dto.captchaText))) {
       throw new BadRequestException('验证码错误或已过期')
     }
 
@@ -89,8 +123,10 @@ export class AuthService {
       },
     })
 
-    // 注册成功后删除验证码，防止重复使用
-    await this.redisService.del(`captcha:${dto.captchaSessionId}`)
+    // 注册成功后删除验证码，防止重复使用（签名挑战本身随 JWT 过期）
+    if (!dto.captchaSessionId.startsWith('jwt:')) {
+      await this.redisService.del(`captcha:${dto.captchaSessionId}`)
+    }
 
     const tokens = await this.generateTokens(user.id, user.email, user.username, user.role)
     return {

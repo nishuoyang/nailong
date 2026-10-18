@@ -1,50 +1,59 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { getOther } from '@/api/images'
-import ImageCard from '@/components/common/ImageCard.vue'
+import { computed } from 'vue'
+import { useInfiniteQuery } from '@tanstack/vue-query'
+import { getOther, type ImageItem } from '@/api/images'
+import PageHeader from '@/components/common/PageHeader.vue'
+import ImageGrid from '@/components/common/ImageGrid.vue'
+import UiEmpty from '@/components/ui/UiEmpty.vue'
+import AppIcon from '@/components/ui/AppIcon.vue'
+import { useAuthStore } from '@/stores/auth'
 
-const page = ref(1)
+const auth = useAuthStore()
 
-const { data, isLoading } = useQuery({
-  queryKey: ['other', page],
-  queryFn: () =>
-    getOther({ page: page.value, size: 20 }).then((r) => r.data),
-  placeholderData: keepPreviousData,
+const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
+  queryKey: ['other', 'infinite'],
+  queryFn: ({ pageParam }) =>
+    getOther({ page: pageParam as number, size: 24 }).then((r) => ({ ...r.data, page: pageParam as number })),
+  initialPageParam: 1,
+  getNextPageParam: (last) => (last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined),
 })
+
+const images = computed<ImageItem[]>(() => data.value?.pages.flatMap((page) => page.data) ?? [])
+const total = computed(() => data.value?.pages[0]?.meta.total ?? 0)
 </script>
 
 <template>
-  <div class="max-w-7xl mx-auto px-4 py-8">
-    <div class="text-center mb-10">
-      <div class="flex items-center justify-center gap-3 mb-3">
-        <img src="/logo.png" alt="奶龙" class="w-12 h-12 rounded-full object-cover" />
-        <h1 class="text-4xl font-bold">其他推荐</h1>
+  <div>
+    <PageHeader
+      eyebrow="Off-topic · 其他推荐"
+      title="和奶龙无关，但很好看"
+      description="一个不太正经的副展厅：风景、插画、摄影、奇怪的截图。只要好看，都可以放进来。"
+      :count="total"
+      mark="◌"
+    >
+      <template #actions>
+        <RouterLink v-if="auth.isLoggedIn" :to="{ path: '/upload', query: { section: 'other' } }" class="n-btn n-btn-primary no-underline">
+          <AppIcon name="upload" :size="15" /> 投稿到这个板块
+        </RouterLink>
+        <RouterLink v-else to="/login" class="n-btn n-btn-outline no-underline">登录后投稿</RouterLink>
+      </template>
+    </PageHeader>
+
+    <div class="n-container py-10 sm:py-12">
+      <ImageGrid :images="images" :loading="isLoading" :skeleton-count="8">
+        <template #empty>
+          <UiEmpty title="这个展厅还空着" description="投稿一张与奶龙无关、但你觉得很好看的图。" icon="globe">
+            <RouterLink :to="{ path: '/upload', query: { section: 'other' } }" class="n-btn n-btn-primary no-underline">去投稿</RouterLink>
+          </UiEmpty>
+        </template>
+      </ImageGrid>
+
+      <div v-if="images.length" class="mt-10 flex justify-center">
+        <button v-if="hasNextPage" class="n-btn n-btn-outline n-btn-lg min-w-44" :disabled="isFetchingNextPage" @click="fetchNextPage()">
+          {{ isFetchingNextPage ? '加载中' : '继续看' }}
+        </button>
+        <p v-else class="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">— 到底了 —</p>
       </div>
-      <p class="text-gray-500 text-lg">换个口味，发现不一样的精彩</p>
-    </div>
-
-    <div v-if="isLoading" class="text-center py-20">
-      <p class="text-gray-400">加载中...</p>
-    </div>
-
-    <div v-else-if="!data?.data?.length" class="text-center py-20">
-      <p class="text-gray-400 text-lg">暂无其他推荐图片</p>
-    </div>
-
-    <div v-else class="columns-2 md:columns-3 lg:columns-4 gap-2 [column-fill:balance]">
-      <ImageCard v-for="image in data.data" :key="image.id" :image="image" class="mb-2 break-inside-avoid" />
-    </div>
-
-    <div v-if="data?.meta && data.meta.totalPages > 1" class="flex justify-center mt-10">
-      <el-pagination
-        v-model:current-page="page"
-        :page-size="20"
-        :total="data.meta.total"
-        background
-        layout="prev, pager, next"
-        @current-change="(p: number) => page = p"
-      />
     </div>
   </div>
 </template>

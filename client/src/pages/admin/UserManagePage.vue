@@ -1,141 +1,128 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/vue-query'
 import request from '@/utils/request'
-// ElMessage 由 unplugin-auto-import 按需注入（见 vite.config.ts）
-import ProfileLayout from '@/components/layout/ProfileLayout.vue'
+import { useToast } from '@/composables/useToast'
+import { formatDate } from '@/utils/format'
+import AdminShell from '@/components/layout/AdminShell.vue'
+import UiAvatar from '@/components/ui/UiAvatar.vue'
+import UiModal from '@/components/ui/UiModal.vue'
+import UiButton from '@/components/ui/UiButton.vue'
+import UiEmpty from '@/components/ui/UiEmpty.vue'
+import AppIcon from '@/components/ui/AppIcon.vue'
 
+const toast = useToast()
 const queryClient = useQueryClient()
 const page = ref(1)
-const dialogVisible = ref(false)
-const editingUser = ref<any>(null)
-const form = ref({ username: '', email: '', role: 'user', bioStatus: 'approved' })
-const submitting = ref(false)
+const searchInput = ref('')
+const search = ref('')
+
+let timer: number | undefined
+watch(searchInput, (value) => {
+  window.clearTimeout(timer)
+  timer = window.setTimeout(() => {
+    search.value = value.trim()
+    page.value = 1
+  }, 300)
+})
 
 const { data, isLoading } = useQuery({
-  queryKey: ['admin-users', page],
+  queryKey: ['admin-users', page, search],
   queryFn: () =>
-    request.get('/users', { params: { page: page.value, size: 20 } }).then((r) => ({
-      data: r.data.data,
-      meta: r.data.meta,
-    })),
+    request
+      .get('/users', { params: { page: page.value, size: 20, search: search.value || undefined } })
+      .then((r) => ({ data: r.data.data, meta: r.data.meta })),
   placeholderData: keepPreviousData,
 })
 
+const editing = ref<any>(null)
+const saving = ref(false)
+const form = reactive({ username: '', email: '', role: 'user', bioStatus: 'approved' })
+
 function openEdit(user: any) {
-  editingUser.value = user
-  form.value = {
-    username: user.username,
-    email: user.email,
-    role: user.role,
-    bioStatus: user.bioStatus || 'approved',
-  }
-  dialogVisible.value = true
+  editing.value = user
+  form.username = user.username
+  form.email = user.email
+  form.role = user.role
+  form.bioStatus = user.bioStatus || 'approved'
 }
 
-async function handleSave() {
-  submitting.value = true
+async function save() {
+  if (!editing.value) return
+  saving.value = true
   try {
-    await request.patch(`/users/${editingUser.value.id}`, form.value)
+    await request.patch(`/users/${editing.value.id}`, { ...form })
     queryClient.invalidateQueries({ queryKey: ['admin-users'] })
-    ElMessage.success('保存成功')
-    dialogVisible.value = false
+    toast.success('用户信息已更新')
+    editing.value = null
   } catch (err: any) {
-    ElMessage.error(err.response?.data?.message || '保存失败')
+    toast.error(err.response?.data?.message || '保存失败')
   } finally {
-    submitting.value = false
+    saving.value = false
   }
 }
-
-const menuItems = [
-  { label: '管理概览', to: '/admin' },
-  { label: '图片管理', to: '/admin/images' },
-  { label: '用户管理', to: '/admin/users' },
-  { label: 'Bio 审核', to: '/admin/bio-review' },
-  { label: '分类管理', to: '/admin/categories' },
-  { label: '设置', to: '/admin/settings' },
-]
 </script>
 
 <template>
-  <ProfileLayout title="用户管理">
-    <template #menu>
-      <router-link
-        v-for="item in menuItems"
-        :key="item.to"
-        :to="item.to"
-        class="px-3 py-2 rounded-lg text-sm no-underline transition-colors"
-        :class="$route.path === item.to ? 'bg-orange-50 text-orange-600 font-medium' : 'text-gray-600 hover:bg-gray-50'"
-      >
-        {{ item.label }}
-      </router-link>
-    </template>
+  <AdminShell title="用户管理" eyebrow="Members" description="查看成员、调整角色和简介审核状态。">
+    <div class="rounded-[24px] border border-line bg-surface">
+      <div class="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between">
+        <p class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Total <span class="text-ink">{{ data?.meta?.total ?? 0 }}</span></p>
+        <div class="relative w-full sm:w-72">
+          <AppIcon name="search" :size="14" class="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+          <input v-model="searchInput" type="search" class="h-9 w-full rounded-full border border-line bg-paper/50 pl-9 pr-3 text-xs text-ink outline-none transition placeholder:text-muted focus:border-ink" placeholder="搜用户名或邮箱…" />
+        </div>
+      </div>
 
-    <div v-if="isLoading" class="text-center py-20"><p class="text-gray-400">加载中...</p></div>
+      <div v-if="isLoading" class="space-y-2 p-4">
+        <div v-for="i in 5" :key="i" class="n-skeleton h-16 rounded-2xl" />
+      </div>
 
-    <div v-else class="bg-white rounded-xl shadow-sm overflow-hidden">
-      <el-table :data="data?.data" stripe>
-        <el-table-column prop="username" label="用户名" min-width="120" />
-        <el-table-column prop="email" label="邮箱" min-width="180" />
-        <el-table-column label="角色" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.role === 'admin' ? 'danger' : 'info'" size="small">
-              {{ row.role === 'admin' ? '管理员' : '用户' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="Bio 状态" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="row.bio" :type="row.bioStatus === 'approved' ? 'success' : 'warning'" size="small">
-              {{ row.bioStatus === 'approved' ? '已审核' : '待审核' }}
-            </el-tag>
-            <span v-else class="text-gray-300 text-xs">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="createdAt" label="注册时间" width="120">
-          <template #default="{ row }">
-            {{ new Date(row.createdAt).toLocaleDateString('zh-CN') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" @click="openEdit(row)">编辑</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <div v-else-if="data?.data?.length" class="divide-y divide-line">
+        <div v-for="user in data.data" :key="user.id" class="flex items-center gap-3 p-4">
+          <UiAvatar :src="user.avatarUrl" :name="user.username" :size="38" />
+          <div class="min-w-0 flex-1">
+            <p class="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-ink">
+              {{ user.username }}
+              <span v-if="user.role === 'admin'" class="rounded-full bg-butter/30 px-2 py-0.5 font-mono text-[8px] uppercase">Admin</span>
+              <span v-if="user.bio && user.bioStatus === 'pending'" class="rounded-full bg-accent/10 px-2 py-0.5 font-mono text-[8px] text-accent">简介待审</span>
+            </p>
+            <p class="mt-0.5 truncate font-mono text-[9px] text-muted">{{ user.email }} · 加入于 {{ formatDate(user.createdAt) }}</p>
+          </div>
+          <button class="n-btn n-btn-outline n-btn-sm shrink-0" @click="openEdit(user)"><AppIcon name="edit" :size="12" /> 编辑</button>
+        </div>
+      </div>
+
+      <UiEmpty v-else title="没有找到用户" description="试试别的关键词。" icon="users" />
     </div>
 
-    <div v-if="data?.meta && data.meta.totalPages > 1" class="flex justify-center mt-6">
-      <el-pagination v-model:current-page="page" :page-size="20" :total="data.meta.total"
-        background layout="prev, pager, next" />
+    <div v-if="data?.meta && data.meta.totalPages > 1" class="mt-4 flex items-center justify-between rounded-2xl border border-line bg-surface px-4 py-3">
+      <span class="font-mono text-[10px] text-muted">第 {{ data.meta.page }} / {{ data.meta.totalPages }} 页</span>
+      <div class="flex gap-1.5">
+        <button class="n-btn n-btn-outline n-btn-sm" :disabled="page <= 1" @click="page--">上一页</button>
+        <button class="n-btn n-btn-outline n-btn-sm" :disabled="page >= data.meta.totalPages" @click="page++">下一页</button>
+      </div>
     </div>
 
-    <!-- Edit Dialog -->
-    <el-dialog v-model="dialogVisible" title="编辑用户" width="480px">
-      <el-form :model="form" label-position="top">
-        <el-form-item label="用户名">
-          <el-input v-model="form.username" />
-        </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="form.email" />
-        </el-form-item>
-        <el-form-item label="角色">
-          <el-select v-model="form.role">
-            <el-option label="用户" value="user" />
-            <el-option label="管理员" value="admin" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="editingUser?.bio" label="Bio 状态">
-          <el-select v-model="form.bioStatus">
-            <el-option label="已审核" value="approved" />
-            <el-option label="待审核" value="pending" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="handleSave">保存</el-button>
-      </template>
-    </el-dialog>
-  </ProfileLayout>
+    <UiModal :model-value="!!editing" title="编辑用户" width="500px" @update:model-value="editing = null">
+      <label class="mb-1.5 block text-xs font-medium text-ink-2">用户名</label>
+      <input v-model="form.username" class="n-input mb-4" />
+      <label class="mb-1.5 block text-xs font-medium text-ink-2">邮箱</label>
+      <input v-model="form.email" class="n-input mb-4" />
+      <label class="mb-1.5 block text-xs font-medium text-ink-2">角色</label>
+      <div class="mb-4 grid grid-cols-2 gap-2">
+        <button class="rounded-2xl border px-3 py-2.5 text-left text-sm transition" :class="form.role === 'user' ? 'border-ink bg-ink text-paper' : 'border-line text-ink-2'" @click="form.role = 'user'">普通用户</button>
+        <button class="rounded-2xl border px-3 py-2.5 text-left text-sm transition" :class="form.role === 'admin' ? 'border-ink bg-ink text-paper' : 'border-line text-ink-2'" @click="form.role = 'admin'">管理员</button>
+      </div>
+      <label v-if="editing?.bio" class="mb-1.5 block text-xs font-medium text-ink-2">简介状态</label>
+      <div v-if="editing?.bio" class="mb-2 grid grid-cols-2 gap-2">
+        <button class="rounded-2xl border px-3 py-2.5 text-left text-sm transition" :class="form.bioStatus === 'approved' ? 'border-ink bg-ink text-paper' : 'border-line text-ink-2'" @click="form.bioStatus = 'approved'">已通过</button>
+        <button class="rounded-2xl border px-3 py-2.5 text-left text-sm transition" :class="form.bioStatus === 'pending' ? 'border-ink bg-ink text-paper' : 'border-line text-ink-2'" @click="form.bioStatus = 'pending'">待审核</button>
+      </div>
+      <div class="mt-5 flex justify-end gap-2">
+        <UiButton variant="ghost" @click="editing = null">取消</UiButton>
+        <UiButton variant="primary" :loading="saving" @click="save">保存</UiButton>
+      </div>
+    </UiModal>
+  </AdminShell>
 </template>

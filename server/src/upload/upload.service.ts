@@ -2,11 +2,8 @@ import { Injectable, BadRequestException } from '@nestjs/common'
 import * as sharp from 'sharp'
 import { PrismaService } from '../prisma/prisma.service'
 import { MinioService, type ObjectMeta } from '../minio/minio.service'
-
-// 简易 HTML 标签去除
-function stripHtml(input: string): string {
-  return input.replace(/<[^>]*>/g, '')
-}
+import { cleanText } from '../common/utils/text'
+import { ensureTags } from '../common/utils/tags'
 
 @Injectable()
 export class UploadService {
@@ -22,6 +19,7 @@ export class UploadService {
     description?: string,
     categoryIds?: string[],
     section?: string,
+    rawTags?: string,
   ) {
     if (!file) {
       throw new BadRequestException('请选择要上传的图片')
@@ -89,6 +87,25 @@ export class UploadService {
       throw new BadRequestException('图片处理失败，请确认文件未损坏')
     }
 
+    // 模糊占位图与主色：列表先铺色块再换清晰图，避免大图加载时的空洞。
+    // 1x1 raw 取主色；24px WebP 作为极小的 data URI 占位（通常 < 600 字节）。
+    let dominantColor: string | null = null
+    let blurDataUrl: string | null = null
+    try {
+      const [pixel, blur] = await Promise.all([
+        sharp(mdBuffer).resize(1, 1, { fit: 'cover' }).raw().toBuffer(),
+        sharp(mdBuffer).resize(24).blur(1.4).webp({ quality: 35 }).toBuffer(),
+      ])
+      if (pixel.length >= 3) {
+        dominantColor = '#' + [pixel[0], pixel[1], pixel[2]]
+          .map((v) => v.toString(16).padStart(2, '0'))
+          .join('')
+      }
+      blurDataUrl = `data:image/webp;base64,${blur.toString('base64')}`
+    } catch {
+      // 占位图失败不影响上传：前端会退化为普通 loading
+    }
+
     // 上传到 MinIO
     //
     // 必须显式写入对象元数据：不传 meta 时 MinIO 会把对象存成 `binary/octet-stream`
@@ -121,16 +138,19 @@ export class UploadService {
     ])
 
     const baseUrl = this.minioService.baseUrl
+    const tags = await ensureTags(this.prisma, rawTags)
 
     const image = await this.prisma.image.create({
       data: {
-        title: stripHtml(title),
-        description: description ? stripHtml(description) : null,
+        title: cleanText(title, 255),
+        description: description ? cleanText(description, 500) : null,
         url: `${baseUrl}/${rawName}`,
         thumbnailUrl: `${baseUrl}/${mdName}`,
         thumbnailSmUrl: `${baseUrl}/${smName}`,
         width: mdMeta.width ?? null,
         height: mdMeta.height ?? null,
+        dominantColor,
+        blurDataUrl,
         userId,
         status: 'pending',
         section: section === 'other' ? 'other' : 'general',
@@ -139,9 +159,13 @@ export class UploadService {
               create: categoryIds.map((categoryId) => ({ categoryId })),
             }
           : undefined,
+        tags: tags.length
+          ? { create: tags.map((tag) => ({ tagId: tag.id })) }
+          : undefined,
       },
       include: {
         categories: { include: { category: true } },
+        tags: { include: { tag: true } },
       },
     })
 

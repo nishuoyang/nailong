@@ -8,21 +8,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-图片展示社区平台，功能包括：
-- 图片浏览（瀑布流列表、详情、搜索、分类筛选、三栏布局）
-- 精选推荐（管理员手动标记）/ 其他推荐（独立 section，管理员上传）/ 每周排行榜 / 每日推荐
+奶龙主题图片社区「奶龙宇宙」，功能包括：
+- 图片浏览（瀑布流列表、详情、搜索、分类/标签筛选、精选/其他推荐）
+- 排行榜（周/月）、每日推荐、站点统计
 - 用户注册/登录（JWT + 验证码），个人主页（bio 可编辑，需审核）
-- 用户上传图片（sharp 生成缩略图，管理员审核后公开可见）
-- 点赞/下载互动（显示计数，下载通过服务端代理）
-- 后台管理（审核、上下架、删除、精选标记、分类管理、用户管理、设置）
-- 暗色/白天模式切换
+- 用户上传图片（sharp 生成缩略图、主色/模糊占位，管理员审核后公开可见）
+- 点赞 / 下载 / 收藏 / 收藏夹（公开或私密）
+- 评论、关注创作者、关注动态流、标签聚合页、相关推荐
+- 全局命令面板（Ctrl/⌘ + K）、表情包工坊（纯前端 canvas）
+- 后台管理（审核、上下架、删除、精选、评论、分类、用户、简介、设置）
+- 暖色纸感 / 暗色模式切换
 
 ## 技术栈
 
 | 层 | 选型 |
 |---|---|
 | 前端 | Vue 3 + TypeScript + Vite |
-| UI | Tailwind CSS v4 + Element Plus |
+| UI | Tailwind CSS v4 + 本地 UI 组件 + 自托管 Smiley Sans |
 | 路由 | Vue Router 4 |
 | 数据请求 | @tanstack/vue-query |
 | 状态管理 | Pinia |
@@ -76,39 +78,51 @@ docker compose up -d
 7. **存储透明**：Prisma 只存 URL 字符串，切换 MinIO/OSS/COS 不改 schema
 8. **JWT 公开端点**：`@Public()` 端点手动解析 JWT（不通过 Passport），有 token 则设 `request.user`，无则放行
 9. **图片 section**：`general`（发现页）/ `other`（其他推荐页），发现页只查 `section=general`
-10. **首页布局**：三栏 `xl:block`，左右侧栏在 <1280px 时同时隐藏
+10. **首页布局**：编辑式 Hero（左文右每日推荐）+ 横向热榜 + 筛选/标签栏 + 瀑布流；旧的三栏模板已移除
 11. **验证码**：`svg-captcha` 生成，答案存 Redis，5 分钟过期不区分大小写
 12. **每日推荐**：随机选 approved 图片，Redis 缓存到次日凌晨 4 点
-13. **暗色模式**：`localStorage('theme')`，`<html class="dark">` + Tailwind `dark:` variant，右下角 ⚙️ 浮动按钮
+13. **暗色模式**：`theme-init.js` 在首屏前读取 `localStorage('theme')` / 系统偏好，`<html class="dark">` + Tailwind `dark:` variant；设计 token 在 `client/src/style.css`，主题切换在顶部导航
+14. **社区数据**：评论/收藏/关注/标签均为独立表；Image 上的 `commentCount`/`favoriteCount` 在写操作事务内维护，列表页不做 N+1 计数
+15. **图片占位**：上传时由 sharp 生成 `dominantColor` 与极小 `blurDataUrl`（data URI），列表先铺占位再换清晰图
+16. **验证码降级**：Redis 正常时验证码存 Redis；Redis 不可用时返回带 HMAC 答案的 5 分钟签名挑战，注册不因缓存故障整体不可用
+17. **新 API**：`/api/comments`、`/api/favorites`、`/api/collections`、`/api/follows`、`/api/tags`、`/api/feed`、`/api/related`、`/api/stats`；公开端点用 `@Public()`，其余走全局 JWT guard
 
 ## 项目结构
 
 ```
 nailong/
 ├── client/src/
-│   ├── api/               # auth.ts, images.ts, upload.ts, admin.ts
+│   ├── api/               # auth.ts, images.ts, social.ts, upload.ts, admin.ts, index.ts
 │   ├── components/
-│   │   ├── common/        # ImageCard, SearchBar, Pagination
-│   │   └── layout/        # AppLayout, ProfileLayout
+│   │   ├── common/        # ImageCard, ImageGrid, PageHeader, CollectionCard/Form/Picker
+│   │   └── layout/        # AppLayout, SiteHeader/Footer, AdminShell, AuthShell, CommandPalette
+│   ├── components/ui/     # BrandMark, AppIcon, UiModal, UiButton, ToastHost
+│   ├── composables/       # useTheme, useCommandPalette, useToast
 │   ├── pages/
-│   │   ├── HomePage, ImageDetailPage, SearchPage
-│   │   ├── LoginPage, RegisterPage, ProfilePage, UploadPage
-│   │   ├── FeaturedPage, OtherPage, UserProfilePage
-│   │   └── admin/         # Dashboard, ImageManage, UserManage, CategoryManage, Settings
-│   ├── router/            # 路由配置 + beforeEach 守卫（含 restoreUser）
+│   │   ├── HomePage, ImageDetailPage, SearchPage, TagPage
+│   │   ├── LoginPage, RegisterPage, ProfilePage, UploadPage, UserProfilePage
+│   │   ├── FeaturedPage, OtherPage, CollectionsPage, CollectionDetailPage, FeedPage
+│   │   └── admin/         # Dashboard, ImageManage, CommentManage, BioReview, UserManage, CategoryManage, Settings
+│   ├── router/            # 路由配置 + beforeEach 守卫（含 restoreUser）+ 标题/滚动
 │   ├── stores/            # auth.ts（含 restoreUser）
 │   └── utils/             # request.ts（axios 实例 + 401 自动刷新 token）
 ├── server/src/
 │   ├── auth/              # 认证（register/login/refresh/captcha，JWT strategy + guard）
 │   ├── users/             # 用户 CRUD + bio + 公开主页
-│   ├── images/            # 公开接口（列表/详情/搜索/featured/other/daily/leaderboard/文件代理）
-│   ├── upload/            # 上传 + MinIO + sharp 缩略图（300px/800px）
+│   ├── images/            # 公开接口（列表/详情/相关推荐/搜索/featured/other/daily/leaderboard/stats/文件代理）
+│   ├── upload/            # 上传 + MinIO + sharp 缩略图/占位图
 │   ├── likes/             # 点赞 toggle + 下载计数
-│   ├── admin/             # 审核/上下架/删除/精选/分类管理/设置
+│   ├── comments/          # 评论列表/发表/删除
+│   ├── favorites/         # 收藏 toggle / 我的收藏
+│   ├── collections/       # 收藏夹 CRUD / 成员管理
+│   ├── follows/           # 关注 toggle / 粉丝列表 / 关注动态
+│   ├── tags/              # 标签列表 / 标签详情
+│   ├── admin/             # 审核/上下架/删除/精选/评论/分类/设置/统计
 │   ├── common/            # guards/decorators/filters/interceptors
 │   ├── prisma/            # PrismaModule + PrismaService
 │   ├── redis/             # RedisModule + RedisService
 │   └── minio/             # 共享 MinioModule（@Global），ensureBucket + 公开读策略
+├── client/public/fonts/   # Smiley Sans（OFL，自托管）
 └── docker-compose.yml     # Redis + MinIO（无 PostgreSQL）
 ```
 

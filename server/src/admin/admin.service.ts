@@ -2,6 +2,8 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service'
 import { MinioService } from '../minio/minio.service'
 import { RedisService } from '../redis/redis.service'
+import { ensureTags } from '../common/utils/tags'
+import { cleanText } from '../common/utils/text'
 
 function parsePage(page?: number): number {
   const p = Number(page)
@@ -20,13 +22,20 @@ export class AdminService {
     private redisService: RedisService,
   ) {}
 
-  async findAllImages(params: { page?: number; size?: number; status?: string }) {
+  async findAllImages(params: { page?: number; size?: number; status?: string; search?: string }) {
     const page = parsePage(params.page)
     const size = parseSize(params.size)
-    const { status } = params
+    const { status, search } = params
 
     const where: any = {}
     if (status) where.status = status
+    if (search) {
+      where.OR = [
+        { title: { contains: search } },
+        { description: { contains: search } },
+        { user: { username: { contains: search } } },
+      ]
+    }
 
     const [data, total] = await Promise.all([
       this.prisma.image.findMany({
@@ -34,6 +43,7 @@ export class AdminService {
         include: {
           user: { select: { id: true, username: true } },
           categories: { include: { category: true } },
+          tags: { include: { tag: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * size,
@@ -42,7 +52,90 @@ export class AdminService {
       this.prisma.image.count({ where }),
     ])
 
-    return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) } }
+    return {
+      data: data.map((image) => ({
+        ...image,
+        categories: image.categories.map((c) => c.category),
+        tags: image.tags.map((t) => t.tag),
+      })),
+      meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 },
+    }
+  }
+
+  async stats() {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const [pending, approved, rejected, offline, users, comments, collections, favorites, todayUploads, agg] =
+      await Promise.all([
+        this.prisma.image.count({ where: { status: 'pending' } }),
+        this.prisma.image.count({ where: { status: 'approved' } }),
+        this.prisma.image.count({ where: { status: 'rejected' } }),
+        this.prisma.image.count({ where: { status: 'offline' } }),
+        this.prisma.user.count(),
+        this.prisma.comment.count(),
+        this.prisma.collection.count(),
+        this.prisma.favorite.count(),
+        this.prisma.image.count({ where: { createdAt: { gte: today } } }),
+        this.prisma.image.aggregate({
+          _sum: { likeCount: true, viewCount: true, downloadCount: true },
+        }),
+      ])
+
+    return {
+      pending,
+      approved,
+      rejected,
+      offline,
+      users,
+      comments,
+      collections,
+      favorites,
+      todayUploads,
+      likes: agg._sum.likeCount ?? 0,
+      views: agg._sum.viewCount ?? 0,
+      downloads: agg._sum.downloadCount ?? 0,
+    }
+  }
+
+  async listComments(params: { page?: number; size?: number; search?: string }) {
+    const page = parsePage(params.page)
+    const size = parseSize(params.size)
+    const where = params.search
+      ? {
+          OR: [
+            { content: { contains: params.search } },
+            { user: { username: { contains: params.search } } },
+            { image: { title: { contains: params.search } } },
+          ],
+        }
+      : undefined
+    const [data, total] = await Promise.all([
+      this.prisma.comment.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * size,
+        take: size,
+        include: {
+          user: { select: { id: true, username: true, avatarUrl: true } },
+          image: { select: { id: true, title: true, thumbnailSmUrl: true, thumbnailUrl: true } },
+        },
+      }),
+      this.prisma.comment.count({ where }),
+    ])
+    return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 } }
+  }
+
+  async deleteComment(id: string) {
+    const comment = await this.prisma.comment.findUnique({ where: { id } })
+    if (!comment) throw new NotFoundException('评论不存在或已被删除')
+    await this.prisma.$transaction([
+      this.prisma.comment.delete({ where: { id } }),
+      this.prisma.image.updateMany({
+        where: { id: comment.imageId, commentCount: { gt: 0 } },
+        data: { commentCount: { decrement: 1 } },
+      }),
+    ])
+    return { id, deleted: true }
   }
 
   async updateImageStatus(id: string, status: string) {
@@ -92,7 +185,13 @@ export class AdminService {
 
   async updateImage(
     id: string,
-    data: { title?: string; description?: string; categoryIds?: string[] },
+    data: {
+      title?: string
+      description?: string
+      categoryIds?: string[]
+      tagNames?: string[]
+      section?: string
+    },
   ) {
     const image = await this.prisma.image.findUnique({ where: { id } })
     if (!image) throw new NotFoundException('图片不存在')
@@ -100,13 +199,23 @@ export class AdminService {
     if (data.title !== undefined && !data.title.trim()) {
       throw new BadRequestException('标题不能为空')
     }
+    if (data.section !== undefined && !['general', 'other'].includes(data.section)) {
+      throw new BadRequestException('无效的板块')
+    }
+
+    // Resolve tags before opening the transaction: tag creation may hit its own
+    // unique constraints and is safe to run idempotently.
+    const tagRows = data.tagNames !== undefined ? await ensureTags(this.prisma, data.tagNames) : null
 
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.image.update({
         where: { id },
         data: {
-          ...(data.title !== undefined ? { title: data.title.trim() } : {}),
-          ...(data.description !== undefined ? { description: data.description } : {}),
+          ...(data.title !== undefined ? { title: cleanText(data.title, 255) } : {}),
+          ...(data.description !== undefined
+            ? { description: cleanText(data.description, 500) || null }
+            : {}),
+          ...(data.section !== undefined ? { section: data.section } : {}),
         },
       })
 
@@ -122,6 +231,15 @@ export class AdminService {
         if (data.categoryIds.length > 0) {
           await tx.imagesOnCategories.createMany({
             data: data.categoryIds.map((categoryId) => ({ imageId: id, categoryId })),
+          })
+        }
+      }
+
+      if (tagRows) {
+        await tx.imageTag.deleteMany({ where: { imageId: id } })
+        if (tagRows.length > 0) {
+          await tx.imageTag.createMany({
+            data: tagRows.map((tag) => ({ imageId: id, tagId: tag.id })),
           })
         }
       }

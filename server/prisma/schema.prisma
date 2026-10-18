@@ -19,9 +19,14 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  images    Image[]
-  likes     Like[]
-  downloads Download[]
+  images      Image[]
+  likes       Like[]
+  downloads   Download[]
+  comments    Comment[]
+  favorites   Favorite[]
+  collections Collection[]
+  following   Follow[]     @relation("Follower")
+  followers   Follow[]     @relation("Following")
 
   // 后台用户列表：无过滤 + ORDER BY created_at DESC
   @@index([createdAt])
@@ -70,8 +75,8 @@ model Image {
   /// 宽高比与所展示图片一致（md 只缩宽、不裁剪），供前端 aspect-ratio 占位根治 CLS。
   /// 注意**不是原图尺寸**：原图仅经 /file 代理下载，故意不参与视图加载（避免把
   /// 多 MB 原图拉进视口），所以不需要也没有存储原图宽高。
-  width        Int?
-  height       Int?
+  width          Int?
+  height         Int?
   userId         String   @map("user_id")
   status         String   @default("pending")
   section        String   @default("general")
@@ -79,13 +84,24 @@ model Image {
   likeCount      Int      @default(0) @map("like_count")
   downloadCount  Int      @default(0) @map("download_count")
   viewCount      Int      @default(0) @map("view_count")
+  /// 评论数 / 收藏数：列表页高频展示，写入时与明细在同一事务里维护，避免 N+1 计数。
+  commentCount   Int      @default(0) @map("comment_count")
+  favoriteCount  Int      @default(0) @map("favorite_count")
+  /// 极小的模糊占位图（data URI）与主色。上传时由 sharp 生成，
+  /// 列表先铺主色/模糊图再换清晰图，避免图片加载时的空洞与跳变。
+  blurDataUrl    String?  @map("blur_data_url")
+  dominantColor  String?  @map("dominant_color")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  user       User                  @relation(fields: [userId], references: [id])
-  categories ImagesOnCategories[]
-  likes      Like[]
-  downloads  Download[]
+  user            User                 @relation(fields: [userId], references: [id])
+  categories      ImagesOnCategories[]
+  likes           Like[]
+  downloads       Download[]
+  comments        Comment[]
+  favorites       Favorite[]
+  tags            ImageTag[]
+  collectionItems CollectionItem[]
 
   // 后台列表 / 精选：WHERE status=? + ORDER BY created_at DESC
   @@index([status, createdAt])
@@ -93,6 +109,10 @@ model Image {
   @@index([userId, createdAt])
   // 公开个人主页作品：WHERE user_id=? AND status='approved' + ORDER BY created_at DESC
   @@index([userId, status, createdAt])
+  // 发现页：WHERE status='approved' AND section=? + ORDER BY created_at DESC
+  @@index([status, section, createdAt])
+  // 热门/排行：WHERE status='approved' + ORDER BY like_count DESC
+  @@index([status, likeCount])
 }
 
 model ImagesOnCategories {
@@ -128,10 +148,112 @@ model Download {
   createdAt DateTime @default(now()) @map("created_at")
 
   user  User  @relation(fields: [userId], references: [id])
-  image Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
 
   // 每日下载配额校验：WHERE user_id=? AND created_at>=?（实测原本是全表 SCAN）
   @@index([userId, createdAt])
   // 删除图片时的级联删除
   @@index([imageId])
+}
+
+/// 标签：上传时随图创建，详情页与发现页可筛选。
+/// slug 对中文保持原样（URL 编码后仍可读），英文统一小写与连字符。
+model Tag {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  images ImageTag[]
+
+  @@index([createdAt])
+}
+
+model ImageTag {
+  imageId String @map("image_id")
+  tagId   String @map("tag_id")
+
+  image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([imageId, tagId])
+  @@index([tagId])
+}
+
+/// 评论：只允许登录用户发表；作者与管理员可删除。
+/// 内容在服务端去标签、压空白、限长，展示层仍按纯文本渲染。
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+  userId    String   @map("user_id")
+  imageId   String   @map("image_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  @@index([imageId, createdAt])
+  @@index([userId, createdAt])
+}
+
+/// 收藏（喜欢/稍后再看）：与点赞分开，点赞是公开态度，收藏是私人书签。
+model Favorite {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  imageId   String   @map("image_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  image Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, imageId])
+  @@index([imageId])
+  @@index([userId, createdAt])
+}
+
+/// 收藏夹：用户的主题合集，可公开或私密。
+/// coverUrl 不落库，读取时取第一张可见图片作为封面，避免删图后留下坏封面。
+model Collection {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  isPublic    Boolean  @default(true) @map("is_public")
+  userId      String   @map("user_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CollectionItem[]
+
+  @@index([userId, createdAt])
+  @@index([isPublic, createdAt])
+}
+
+model CollectionItem {
+  id           String   @id @default(uuid())
+  collectionId String   @map("collection_id")
+  imageId      String   @map("image_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  image      Image      @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, imageId])
+  @@index([imageId])
+  @@index([collectionId, createdAt])
+}
+
+/// 关注：单向关系。动态页按 followingId 聚合关注对象的作品。
+model Follow {
+  id          String   @id @default(uuid())
+  followerId  String   @map("follower_id")
+  followingId String   @map("following_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  follower  User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followingId, createdAt])
+  @@index([followerId, createdAt])
 }

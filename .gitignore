@@ -30,3 +30,9 @@ logs/
 .codex/
 AGENTS.md
 docs/
+# 本地演示素材与演示库（不随仓库/生产镜像分发）
+client/public/demo/
+server/prisma/demo.db
+server/prisma/demo.db-*
+server/prisma/*-demo.mjs
+server/prisma/test-captcha.mjs

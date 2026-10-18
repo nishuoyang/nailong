@@ -1,132 +1,143 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useQuery, useQueryClient } from '@tanstack/vue-query'
+import { reactive, ref } from 'vue'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { getCategories } from '@/api/images'
-import { createCategory, updateCategory, deleteCategory } from '@/api/admin'
-// ElMessage / ElMessageBox 由 unplugin-auto-import 按需注入（见 vite.config.ts）
-import type { FormInstance } from 'element-plus'
-import ProfileLayout from '@/components/layout/ProfileLayout.vue'
+import { createCategory, deleteCategory, updateCategory } from '@/api/admin'
+import { useToast } from '@/composables/useToast'
+import AdminShell from '@/components/layout/AdminShell.vue'
+import UiModal from '@/components/ui/UiModal.vue'
+import UiButton from '@/components/ui/UiButton.vue'
+import UiEmpty from '@/components/ui/UiEmpty.vue'
+import AppIcon from '@/components/ui/AppIcon.vue'
 
+const toast = useToast()
 const queryClient = useQueryClient()
 
-const dialogVisible = ref(false)
-const dialogTitle = ref('新增分类')
-const editingId = ref<string | null>(null)
-const formRef = ref<FormInstance>()
-const form = ref({ name: '', slug: '', description: '' })
-const submitting = ref(false)
-
-// 与首页/上传页共用 ['categories'] 同一个缓存条目（同一个接口），
-// 之前用 ['admin-categories'] 会多存一份、并需要在两处分别 invalidate。
 const { data: categories, isLoading } = useQuery({
   queryKey: ['categories'],
   queryFn: () => getCategories().then((r) => r.data.data),
   staleTime: 10 * 60_000,
 })
 
+const dialogOpen = ref(false)
+const editingId = ref<string | null>(null)
+const saving = ref(false)
+const deleteTarget = ref<{ id: string; name: string; count?: number } | null>(null)
+const form = reactive({ name: '', slug: '', description: '' })
+
 function openCreate() {
-  editingId.value = null; dialogTitle.value = '新增分类'
-  form.value = { name: '', slug: '', description: '' }; dialogVisible.value = true
+  editingId.value = null
+  form.name = ''
+  form.slug = ''
+  form.description = ''
+  dialogOpen.value = true
 }
 
-// el-table 的插槽行类型是 Record<PropertyKey, any>（DefaultRow），无法满足具名属性，
-// 因此这里用具名类型 + 模板处断言收窄，兼顾可读性与类型安全。
-type Category = { id: string; name: string; slug: string; description: string | null }
-
-function openEdit(cat: Category) {
-  editingId.value = cat.id; dialogTitle.value = '编辑分类'
-  form.value = { name: cat.name, slug: cat.slug, description: cat.description || '' }; dialogVisible.value = true
+function openEdit(category: { id: string; name: string; slug: string; description?: string | null }) {
+  editingId.value = category.id
+  form.name = category.name
+  form.slug = category.slug
+  form.description = category.description || ''
+  dialogOpen.value = true
 }
 
-async function handleSubmit() {
-  if (!formRef.value) return
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-    submitting.value = true
-    try {
-      if (editingId.value) { await updateCategory(editingId.value, form.value); ElMessage.success('更新成功') }
-      else { await createCategory(form.value); ElMessage.success('创建成功') }
-      dialogVisible.value = false
-      queryClient.invalidateQueries({ queryKey: ['categories'] })
-    } catch (err: any) { ElMessage.error(err.response?.data?.message || '操作失败') }
-    finally { submitting.value = false }
-  })
-}
-
-async function handleDelete(id: string, name: string) {
+async function save() {
+  if (!form.name.trim()) return toast.warning('请输入分类名称')
+  if (!/^[a-z0-9-]+$/.test(form.slug)) return toast.warning('slug 仅支持小写字母、数字和连字符')
+  saving.value = true
   try {
-    await ElMessageBox.confirm(`确定要删除分类"${name}"吗？`, '确认删除', {
-      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
-    })
-    await deleteCategory(id); ElMessage.success('已删除')
+    if (editingId.value) {
+      await updateCategory(editingId.value, { ...form })
+      toast.success('分类已更新')
+    } else {
+      await createCategory({ ...form })
+      toast.success('分类已创建')
+    }
     queryClient.invalidateQueries({ queryKey: ['categories'] })
-  } catch (err: any) { if (err !== 'cancel') ElMessage.error(err.response?.data?.message || '删除失败') }
+    dialogOpen.value = false
+  } catch (err: any) {
+    toast.error(err.response?.data?.message || '保存失败')
+  } finally {
+    saving.value = false
+  }
 }
 
-const menuItems = [
-  { label: '管理概览', to: '/admin' },
-  { label: '图片管理', to: '/admin/images' },
-  { label: '用户管理', to: '/admin/users' },
-  { label: 'Bio 审核', to: '/admin/bio-review' },
-  { label: '分类管理', to: '/admin/categories' },
-  { label: '设置', to: '/admin/settings' },
-]
+const deleteMutation = useMutation({
+  mutationFn: (id: string) => deleteCategory(id),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ['categories'] })
+    deleteTarget.value = null
+    toast.success('分类已删除')
+  },
+  onError: (err: any) => toast.error(err.response?.data?.message || '删除失败'),
+})
+
+function autoSlug() {
+  if (!editingId.value && !form.slug) {
+    form.slug = form.name
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '')
+  }
+}
 </script>
 
 <template>
-  <ProfileLayout title="分类管理">
-    <template #menu>
-      <router-link
-        v-for="item in menuItems"
-        :key="item.to"
-        :to="item.to"
-        class="px-3 py-2 rounded-lg text-sm no-underline transition-colors"
-        :class="$route.path === item.to
-          ? 'bg-orange-50 text-orange-600 font-medium'
-          : 'text-gray-600 hover:bg-gray-50'"
-      >
-        {{ item.label }}
-      </router-link>
+  <AdminShell title="分类管理" eyebrow="Categories" description="分类会显示在发现页筛选和投稿表单里。">
+    <template #actions>
+      <button class="n-btn n-btn-primary n-btn-sm" @click="openCreate"><AppIcon name="plus" :size="13" /> 新增分类</button>
     </template>
 
-    <div class="mb-4">
-      <el-button type="primary" @click="openCreate">新增分类</el-button>
+    <div v-if="isLoading" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div v-for="i in 6" :key="i" class="n-skeleton h-32 rounded-[22px]" />
     </div>
 
-    <div v-if="isLoading" class="text-center py-20"><p class="text-gray-400">加载中...</p></div>
-
-    <div v-else class="bg-white rounded-xl shadow-sm p-6">
-      <el-table :data="categories" stripe>
-        <el-table-column prop="name" label="名称" />
-        <el-table-column prop="slug" label="Slug" />
-        <el-table-column prop="description" label="描述" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.description || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="180">
-          <template #default="{ row }">
-            <el-button size="small" @click="openEdit(row as Category)">编辑</el-button>
-            <el-button size="small" type="danger" plain @click="handleDelete(row.id, row.name)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+    <div v-else-if="categories?.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <article v-for="category in categories" :key="category.id" class="group rounded-[22px] border border-line bg-surface p-4 transition hover:border-ink/40">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="truncate font-display text-[26px] leading-none text-ink">{{ category.name }}</p>
+            <p class="mt-2 font-mono text-[9px] uppercase tracking-[0.12em] text-muted">/{{ category.slug }}</p>
+          </div>
+          <span class="shrink-0 rounded-full bg-surface-2 px-2 py-1 font-mono text-[9px] text-muted">{{ category.count ?? 0 }} 张</span>
+        </div>
+        <p class="mt-3 line-clamp-2 min-h-[2.4em] text-[11px] leading-relaxed text-muted">{{ category.description || '还没有描述' }}</p>
+        <div class="mt-4 flex gap-1.5 opacity-60 transition group-hover:opacity-100">
+          <button class="n-btn n-btn-outline n-btn-sm !h-7" @click="openEdit(category)"><AppIcon name="edit" :size="11" /> 编辑</button>
+          <button class="n-btn n-btn-ghost n-btn-sm !h-7 !text-accent" @click="deleteTarget = category"><AppIcon name="trash" :size="11" /> 删除</button>
+        </div>
+      </article>
     </div>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="500px">
-      <el-form ref="formRef" :model="form" label-position="top">
-        <el-form-item label="名称" prop="name" :rules="[{ required: true, message: '请输入分类名称' }]">
-          <el-input v-model="form.name" placeholder="例如：风景" />
-        </el-form-item>
-        <el-form-item label="Slug" prop="slug" :rules="[{ required: true, message: '请输入 slug' }, { pattern: /^[a-z0-9-]+$/, message: '仅支持小写字母、数字和连字符' }]">
-          <el-input v-model="form.slug" placeholder="例如：landscape" />
-        </el-form-item>
-        <el-form-item label="描述（可选）">
-          <el-input v-model="form.description" type="textarea" :rows="2" placeholder="分类描述..." />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
-      </template>
-    </el-dialog>
-  </ProfileLayout>
+    <div v-else class="rounded-[24px] border border-line bg-surface">
+      <UiEmpty title="还没有分类" description="建几个分类，让发现页更好逛。" icon="grid">
+        <button class="n-btn n-btn-primary" @click="openCreate">新增第一个</button>
+      </UiEmpty>
+    </div>
+
+    <UiModal v-model="dialogOpen" :title="editingId ? '编辑分类' : '新增分类'" width="500px">
+      <label class="mb-1.5 block text-xs font-medium text-ink-2">名称</label>
+      <input v-model="form.name" class="n-input mb-4" placeholder="例如：风景" maxlength="40" @blur="autoSlug" />
+      <label class="mb-1.5 block text-xs font-medium text-ink-2">Slug</label>
+      <input v-model="form.slug" class="n-input mb-1.5 font-mono" placeholder="landscape" maxlength="60" />
+      <p class="mb-4 font-mono text-[9px] text-muted">仅小写字母、数字和连字符，用于 URL</p>
+      <label class="mb-1.5 block text-xs font-medium text-ink-2">描述</label>
+      <textarea v-model="form.description" rows="3" maxlength="200" class="w-full resize-none rounded-2xl border border-line bg-surface px-4 py-3 text-sm text-ink outline-none focus:border-ink" placeholder="这个分类收些什么？" />
+      <div class="mt-5 flex justify-end gap-2">
+        <UiButton variant="ghost" @click="dialogOpen = false">取消</UiButton>
+        <UiButton variant="primary" :loading="saving" @click="save">保存</UiButton>
+      </div>
+    </UiModal>
+
+    <UiModal :model-value="!!deleteTarget" title="删除分类" width="420px" @update:model-value="deleteTarget = null">
+      <p class="text-sm leading-relaxed text-ink-2">
+        确定删除「{{ deleteTarget?.name }}」吗？
+        <span v-if="deleteTarget?.count" class="text-accent">该分类下还有 {{ deleteTarget.count }} 张图片，需要先移除关联。</span>
+      </p>
+      <div class="mt-5 flex justify-end gap-2">
+        <UiButton variant="ghost" @click="deleteTarget = null">取消</UiButton>
+        <UiButton variant="accent" :loading="deleteMutation.isPending.value" @click="deleteTarget && deleteMutation.mutate(deleteTarget.id)">确认删除</UiButton>
+      </div>
+    </UiModal>
+  </AdminShell>
 </template>

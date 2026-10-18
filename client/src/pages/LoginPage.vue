@@ -1,116 +1,119 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
+import { useRoute, useRouter } from 'vue-router'
 import { login } from '@/api/auth'
-import type { FormInstance, FormRules } from 'element-plus'
+import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+import AuthShell from '@/components/layout/AuthShell.vue'
+import TermsModal from '@/components/layout/TermsModal.vue'
+import AppIcon from '@/components/ui/AppIcon.vue'
+import UiButton from '@/components/ui/UiButton.vue'
 
 const router = useRouter()
 const route = useRoute()
-const authStore = useAuthStore()
+const auth = useAuthStore()
+const toast = useToast()
 
-const formRef = ref<FormInstance>()
+const form = reactive({ email: '', password: '', agreed: false })
 const loading = ref(false)
 const errorMsg = ref('')
+const showPassword = ref(false)
 const showTerms = ref(false)
 
-const form = reactive({
-  email: '',
-  password: '',
-  agreed: false,
-})
-
-const rules: FormRules = {
-  email: [
-    { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '请输入有效的邮箱地址', trigger: 'blur' },
-  ],
-  password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码至少 6 位', trigger: 'blur' },
-  ],
-  agreed: [
-    {
-      validator: (_rule, value, callback) => {
-        if (!value) callback(new Error('请先阅读并同意用户协议'))
-        else callback()
-      },
-      trigger: 'change',
-    },
-  ],
-}
-
-async function handleSubmit() {
-  if (!formRef.value) return
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-    loading.value = true
-    errorMsg.value = ''
-    try {
-      const res = await login(form)
-      const { user, accessToken, refreshToken } = res.data.data
-      authStore.setTokens(accessToken, refreshToken)
-      authStore.setUser(user)
-      const redirect = (route.query.redirect as string) || '/'
-      router.push(redirect)
-    } catch (err: any) {
-      errorMsg.value = err.response?.data?.message || '登录失败，请稍后重试'
-    } finally {
-      loading.value = false
-    }
-  })
+async function submit() {
+  errorMsg.value = ''
+  if (!form.email.trim()) {
+    errorMsg.value = '请输入邮箱'
+    return
+  }
+  if (form.password.length < 6) {
+    errorMsg.value = '密码至少 6 位'
+    return
+  }
+  if (!form.agreed) {
+    errorMsg.value = '请先阅读并同意用户协议'
+    return
+  }
+  loading.value = true
+  try {
+    const res = await login({ email: form.email.trim(), password: form.password })
+    const { user, accessToken, refreshToken } = res.data.data
+    auth.setTokens(accessToken, refreshToken)
+    auth.setUser(user)
+    toast.success(`欢迎回来，${user.username}`)
+    router.push((route.query.redirect as string) || '/')
+  } catch (err: any) {
+    errorMsg.value = err.response?.data?.message || '登录失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
 <template>
-  <div class="max-w-md mx-auto px-4 py-16">
-    <h1 class="text-2xl font-bold mb-2 text-center">登录</h1>
-    <p class="text-gray-400 text-center mb-8">欢迎回到 奶龙</p>
+  <AuthShell>
+    <p class="eyebrow mb-3">Welcome back</p>
+    <h1 class="display text-[42px] leading-none text-ink">登录</h1>
+    <p class="mt-3 text-sm text-muted">回来看看今天又有什么新图。</p>
 
-    <el-alert v-if="errorMsg" :title="errorMsg" type="error" show-icon class="mb-4" closable @close="errorMsg = ''" />
+    <div v-if="errorMsg" class="mt-6 flex items-start gap-2 rounded-2xl border border-accent/30 bg-accent/8 px-4 py-3 text-sm text-accent">
+      <AppIcon name="alert" :size="16" class="mt-0.5 shrink-0" />
+      {{ errorMsg }}
+    </div>
 
-    <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="handleSubmit">
-      <el-form-item label="邮箱" prop="email">
-        <el-input v-model="form.email" placeholder="请输入邮箱" size="large" />
-      </el-form-item>
-      <el-form-item label="密码" prop="password">
-        <el-input v-model="form.password" type="password" placeholder="请输入密码" size="large" show-password />
-      </el-form-item>
-      <el-form-item prop="agreed">
-        <el-checkbox v-model="form.agreed">
-          <span class="text-sm text-gray-600">
-            已阅读并同意
-            <button type="button" class="text-blue-600 bg-transparent border-none cursor-pointer hover:underline" @click="showTerms = true">《用户协议》</button>
-          </span>
-        </el-checkbox>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" native-type="submit" :loading="loading" class="w-full" size="large">
-          登录
-        </el-button>
-      </el-form-item>
-    </el-form>
+    <form class="mt-7 space-y-5" autocomplete="on" @submit.prevent="submit">
+      <label class="block">
+        <span class="mb-1.5 block text-xs font-medium text-ink-2">邮箱</span>
+        <div class="relative">
+          <AppIcon name="mail" :size="16" class="absolute left-4 top-1/2 -translate-y-1/2 text-muted" />
+          <input v-model="form.email" type="email" autocomplete="email" class="n-input !rounded-2xl !py-3 pl-11" placeholder="you@example.com" />
+        </div>
+      </label>
 
-    <p class="text-center text-sm text-gray-400">
+      <label class="block">
+        <span class="mb-1.5 block text-xs font-medium text-ink-2">密码</span>
+        <div class="relative">
+          <AppIcon name="lock" :size="16" class="absolute left-4 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            v-model="form.password"
+            :type="showPassword ? 'text' : 'password'"
+            autocomplete="current-password"
+            class="n-input !rounded-2xl !py-3 pl-11 pr-11"
+            placeholder="至少 6 位"
+          />
+          <button type="button" class="absolute right-3 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full text-muted hover:text-ink" aria-label="显示或隐藏密码" @click="showPassword = !showPassword">
+            <AppIcon :name="showPassword ? 'eye' : 'lock'" :size="14" />
+          </button>
+        </div>
+      </label>
+
+      <label class="flex cursor-pointer items-start gap-2.5 text-xs leading-relaxed text-muted">
+        <button
+          type="button"
+          role="checkbox"
+          :aria-checked="form.agreed"
+          class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border transition"
+          :class="form.agreed ? 'border-ink bg-ink text-paper' : 'border-line-strong bg-surface'"
+          @click="form.agreed = !form.agreed"
+        >
+          <AppIcon v-if="form.agreed" name="check" :size="10" :stroke-width="2.4" />
+        </button>
+        <span>
+          我已阅读并同意
+          <button type="button" class="text-ink underline decoration-accent/60 underline-offset-2 hover:text-accent" @click.prevent="showTerms = true">《用户协议》</button>
+        </span>
+      </label>
+
+      <UiButton type="submit" variant="primary" size="lg" block :loading="loading">
+        进入宇宙 <AppIcon name="arrow-right" :size="16" />
+      </UiButton>
+    </form>
+
+    <p class="mt-6 text-center text-xs text-muted">
       还没有账号？
-      <router-link to="/register" class="text-blue-600 no-underline hover:underline">去注册</router-link>
+      <RouterLink to="/register" class="font-medium text-ink no-underline underline decoration-accent/50 underline-offset-4 hover:text-accent">加入奶龙宇宙</RouterLink>
     </p>
 
-    <!-- 用户协议弹窗 -->
-    <el-dialog v-model="showTerms" title="用户协议" width="560px">
-      <div class="text-sm text-gray-600 leading-relaxed max-h-80 overflow-y-auto space-y-3">
-        <p>欢迎使用 奶龙 图片展示平台（以下简称"本平台"）。请您仔细阅读以下条款：</p>
-        <p><strong>一、服务说明</strong><br />本平台提供图片浏览、上传、下载、点赞及交流互动服务。用户上传内容须遵守国家法律法规，不得上传违法、侵权、暴力、色情等内容。</p>
-        <p><strong>二、用户行为规范</strong><br />1. 用户应对自己上传的内容承担全部责任；2. 禁止上传侵犯他人知识产权、肖像权、隐私权的内容；3. 禁止利用本平台进行任何违法活动；4. 禁止上传恶意代码、病毒或进行任何危害平台安全的行为。</p>
-        <p><strong>三、内容审核</strong><br />用户上传的图片需经管理员审核后方可公开展示。管理员有权拒绝、下架或删除不符合规范的内容，无需事先通知。</p>
-        <p><strong>四、知识产权</strong><br />用户保留对其上传内容的著作权。用户授予本平台在平台范围内展示、分发其内容的非独占许可。未经作者许可，其他用户不得将平台内容用于商业用途。</p>
-        <p><strong>五、免责声明</strong><br />本平台不对用户上传内容的合法性、真实性负责。因用户违反本协议造成的任何法律后果，由用户自行承担。本平台有权随时修改本协议，修改后将在平台公示。</p>
-        <p><strong>六、隐私保护</strong><br />本平台重视用户隐私，不会向第三方出售或分享用户个人信息。用户上传的图片如包含个人隐私信息，由上传者自行承担风险。</p>
-        <p>若您不同意以上条款，请停止使用本平台。继续使用即表示您已阅读并同意本协议的全部内容。</p>
-      </div>
-      <template #footer>
-        <el-button type="primary" @click="showTerms = false">我知道了</el-button>
-      </template>
-    </el-dialog>
-  </div>
+    <TermsModal v-model="showTerms" />
+  </AuthShell>
 </template>
