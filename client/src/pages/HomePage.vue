@@ -424,7 +424,7 @@ const dailyAspect = computed(() => {
         <div class="relative flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
           <div class="max-w-2xl">
             <p class="font-mono text-[10px] uppercase tracking-[0.22em] text-[#181510]/60">03 / Meme Studio</p>
-            <h2 class="display mt-3 text-[36px] leading-[0.95] text-[#181510] sm:text-[54px]">
+            <h2 class="display mt-3 text-[34px] leading-[1.06] text-[#181510] sm:text-[48px]">
               三秒，<br />做张表情包。
             </h2>
             <p class="mt-4 max-w-md text-sm leading-relaxed text-[#181510]/70">
