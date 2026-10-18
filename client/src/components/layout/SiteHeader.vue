@@ -17,6 +17,10 @@ const { open: openPalette } = useCommandPalette()
 const mobileOpen = ref(false)
 const userOpen = ref(false)
 
+// 快捷键提示要跟随平台：Windows/Linux 上写 ⌘K 既不对，⌘ 字形在等宽字体里也容易糊成一团。
+const isApple = /Mac|iPhone|iPad|iPod/.test(`${navigator.platform} ${navigator.userAgent}`)
+const searchShortcut = isApple ? '⌘ K' : 'Ctrl K'
+
 const nav = [
   { to: '/', label: '发现', exact: true },
   { to: '/featured', label: '精选' },
@@ -99,12 +103,12 @@ function logout() {
           <!-- Search trigger -->
           <button
             class="hidden h-9 items-center gap-2 rounded-full border border-line/80 bg-paper/50 px-3 text-xs text-muted transition-all hover:border-ink hover:text-ink md:flex"
-            aria-label="搜索（Ctrl K）"
+            :aria-label="`搜索（${searchShortcut}）`"
             @click="openPalette()"
           >
             <AppIcon name="search" :size="14" />
             <span>搜索</span>
-            <kbd class="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[9px] text-muted">⌘K</kbd>
+            <kbd class="whitespace-nowrap rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[9px] text-muted">{{ searchShortcut }}</kbd>
           </button>
           <button
             class="grid h-9 w-9 place-items-center rounded-full text-ink-2 transition hover:bg-ink/[0.06] hover:text-ink md:hidden"

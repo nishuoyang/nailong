@@ -53,6 +53,7 @@ async function main() {
     const csp = res.headers.get('content-security-policy') || ''
     ok('X-Content-Type-Options: nosniff', xcto === 'nosniff', xcto)
     ok('CSP 含 img-src \'self\'', csp.includes("img-src 'self'"), csp.slice(0, 60))
+    ok('CSP 允许 blob: 图片预览', /img-src[^;]*blob:/.test(csp), csp.slice(0, 120))
   }
 
   // ── 图片列表 & URL 形态 ──

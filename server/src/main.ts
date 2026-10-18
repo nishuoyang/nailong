@@ -152,7 +152,9 @@ async function bootstrap() {
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader(
       'Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; frame-src https://player.bilibili.com; frame-ancestors 'none';",
+      // img-src 必须允许 blob:：投稿页用 URL.createObjectURL() 生成本地预览图，
+      // 少了这一项，生产环境（Nest 下发 CSP）里预览会直接裂成破图标。
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; frame-src https://player.bilibili.com; frame-ancestors 'none';",
     );
     next();
   });
