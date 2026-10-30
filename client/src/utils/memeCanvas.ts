@@ -128,7 +128,7 @@ const MAX_LINES = 4
  * 生产 CSP 是 `font-src 'self' data:`，外部字体本来就会被拦掉；
  * 而且表情包要的是「一眼认出来」的观感，不是设计感。
  */
-export type MemeFont = 'bold' | 'serif' | 'round' | 'hand'
+export type MemeFont = 'bold' | 'display' | 'serif' | 'round' | 'hand'
 
 export const FONT_STACKS: Record<MemeFont, { label: string; family: string; weight: number }> = {
   bold: { label: '经典粗体', family: MEME_FONT, weight: 900 },
@@ -147,9 +147,14 @@ export const FONT_STACKS: Record<MemeFont, { label: string; family: string; weig
     family: '"Kaiti SC","KaiTi","STKaiti","Noto Serif CJK SC",cursive',
     weight: 700,
   },
+  display: {
+    label: '得意黑',
+    family: '"Smiley Sans","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif',
+    weight: 400,
+  },
 }
 
-export const FONT_KEYS: MemeFont[] = ['bold', 'serif', 'round', 'hand']
+export const FONT_KEYS: MemeFont[] = ['bold', 'display', 'serif', 'round', 'hand']
 
 function fontStackOf(key: MemeFont | undefined): { family: string; weight: number } {
   return FONT_STACKS[key ?? 'bold'] ?? FONT_STACKS.bold
@@ -187,7 +192,7 @@ export const TEMPLATES: TemplateMeta[] = [
     name: '底部字幕',
     emoji: '💬',
     desc: '半透明字幕条压底，像一句突然被打上的旁白',
-    accent: '#facc15',
+    accent: '#efbe4d',
     roles: {
       bottom: { size: 74, color: '#ffffff', stroke: false, align: 'center' },
     },
@@ -197,7 +202,7 @@ export const TEMPLATES: TemplateMeta[] = [
     name: '标签 + 大字',
     emoji: '🏷️',
     desc: '左上角贴个标签，一眼说明立场',
-    accent: '#2563eb',
+    accent: '#d9552b',
     roles: {
       top: { size: 46, color: '#ffffff', stroke: false, align: 'left' },
       bottom: { size: 104, color: '#ffffff', stroke: true, align: 'center' },
@@ -208,7 +213,7 @@ export const TEMPLATES: TemplateMeta[] = [
     name: '大字报',
     emoji: '📢',
     desc: '一句话糊满整张图，音量拉满',
-    accent: '#ef4444',
+    accent: '#d9552b',
     roles: {
       free: { size: 150, color: '#ffffff', stroke: true, align: 'center' },
       bottom: { size: 54, color: '#ffffff', stroke: true, align: 'center' },
@@ -219,7 +224,7 @@ export const TEMPLATES: TemplateMeta[] = [
     name: '金句卡',
     emoji: '📜',
     desc: '左下竖条 + 细体大字，一本正经地胡说八道',
-    accent: '#22d3ee',
+    accent: '#efbe4d',
     roles: {
       free: { size: 78, color: '#ffffff', stroke: false, align: 'left', font: 'serif' },
       bottom: { size: 48, color: '#e5e7eb', stroke: false, align: 'left', font: 'serif' },
@@ -230,7 +235,7 @@ export const TEMPLATES: TemplateMeta[] = [
     name: '拍立得',
     emoji: '📸',
     desc: '白色相纸 + 底部落款，适合做纪念卡',
-    accent: '#f8fafc',
+    accent: '#fbf7ee',
     roles: {
       bottom: { size: 58, color: '#1f2937', stroke: false, align: 'center', font: 'hand' },
     },
@@ -240,7 +245,7 @@ export const TEMPLATES: TemplateMeta[] = [
     name: '聊天气泡',
     emoji: '🗨️',
     desc: '左一句右一句，像一段真的聊天记录',
-    accent: '#3b82f6',
+    accent: '#d9552b',
     roles: {
       top: { size: 58, color: '#0f172a', stroke: false, align: 'left' },
       bottom: { size: 58, color: '#ffffff', stroke: false, align: 'left' },
@@ -581,7 +586,7 @@ export function layoutMeme(ctx: CanvasRenderingContext2D, spec: MemeSpec, W: num
         w,
         h,
         radius: h / 2,
-        fill: 'rgba(37,99,235,0.94)',
+        fill: 'rgba(217,85,43,0.94)',
       }
       shadow = true
     } else if (spec.template === 'quote') {
@@ -612,13 +617,13 @@ export function layoutMeme(ctx: CanvasRenderingContext2D, spec: MemeSpec, W: num
         w,
         h,
         radius: Math.min(28, h * 0.36),
-        fill: isLeft ? 'rgba(255,255,255,0.95)' : 'rgba(37,99,235,0.95)',
+        fill: isLeft ? 'rgba(255,255,255,0.95)' : 'rgba(217,85,43,0.95)',
         tail: {
           x: isLeft ? left + h * 0.32 : left + w - h * 0.32,
           y: top + h - 2,
           size: h * 0.26,
           dir: isLeft ? 'left' : 'right',
-          fill: isLeft ? 'rgba(255,255,255,0.95)' : 'rgba(37,99,235,0.95)',
+          fill: isLeft ? 'rgba(255,255,255,0.95)' : 'rgba(217,85,43,0.95)',
         },
       }
       shadow = true
@@ -676,21 +681,31 @@ export function drawMeme(
     const src = coverSource(img, W, H)
     ctx.drawImage(img, src.x, src.y, src.w, src.h, 0, 0, W, H)
   } else {
+    // 没有底图时也画成站点的纸面，而不是一块黑底 RGB 灰条 ——
+    // 工坊的默认状态应该像一张还没贴图的卡纸。
     const g = ctx.createLinearGradient(0, 0, W, H)
-    g.addColorStop(0, '#111827')
-    g.addColorStop(0.5, '#1f2937')
-    g.addColorStop(1, '#0f172a')
+    g.addColorStop(0, '#fbf7ee')
+    g.addColorStop(0.55, '#f3ede1')
+    g.addColorStop(1, '#e9e0cf')
     ctx.fillStyle = g
     ctx.fillRect(0, 0, W, H)
     ctx.filter = 'none'
-    ctx.fillStyle = 'rgba(255,255,255,0.5)'
-    ctx.font = fontOf(46, UI_FONT, 500)
+    ctx.fillStyle = 'rgba(24,21,16,0.09)'
+    for (let y = 34; y < H; y += 30) {
+      for (let x = 34; x < W; x += 30) {
+        ctx.beginPath()
+        ctx.arc(x, y, 1.6, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+    ctx.fillStyle = '#181510'
+    ctx.font = fontOf(46, UI_FONT, 600)
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('从左边挑一张图，或上传本地图片', W / 2, H / 2 - 22)
-    ctx.font = fontOf(34, UI_FONT, 400)
-    ctx.fillStyle = 'rgba(255,255,255,0.32)'
-    ctx.fillText('底图只在你自己的浏览器里处理，不会上传', W / 2, H / 2 + 44)
+    ctx.fillText('从左边挑一张图', W / 2, H / 2 - 28)
+    ctx.font = fontOf(30, UI_FONT, 400)
+    ctx.fillStyle = '#6f6556'
+    ctx.fillText('或者把本地图片直接拖进来', W / 2, H / 2 + 40)
   }
   ctx.restore()
 
@@ -829,9 +844,20 @@ export function drawMeme(
   const sel = options.selection
   if (sel) {
     ctx.save()
-    ctx.strokeStyle = '#38bdf8'
-    ctx.lineWidth = 3
-    ctx.setLineDash([12, 10])
+    // 白描底层 + 朱砂虚线：在任何底图（浅色/深色/花色）上都看得见，
+    // 也不至于像调试框那样抢戏。
+    const markSelection = (x: number, y: number, w: number, h: number) => {
+      ctx.save()
+      ctx.setLineDash([])
+      ctx.strokeStyle = 'rgba(251,247,238,0.92)'
+      ctx.lineWidth = 6
+      ctx.strokeRect(x, y, w, h)
+      ctx.setLineDash([13, 9])
+      ctx.strokeStyle = '#d9552b'
+      ctx.lineWidth = 2.6
+      ctx.strokeRect(x, y, w, h)
+      ctx.restore()
+    }
     if (sel.kind === 'text') {
       const t = layout.texts.find((x) => x.block.id === sel.id)
       if (t) {
@@ -840,13 +866,13 @@ export function drawMeme(
           ctx.rotate((t.rotation * Math.PI) / 180)
           ctx.translate(-t.cx, -t.cy)
         }
-        ctx.strokeRect(t.cx - t.w / 2, t.cy - t.h / 2, t.w, t.h)
+        markSelection(t.cx - t.w / 2, t.cy - t.h / 2, t.w, t.h)
       }
     } else {
       const s = layout.stickers.find((x) => x.item.id === sel.id)
       if (s) {
         const r = s.size * 0.62
-        ctx.strokeRect(s.cx - r, s.cy - r, r * 2, r * 2)
+        markSelection(s.cx - r, s.cy - r, r * 2, r * 2)
       }
     }
     ctx.restore()

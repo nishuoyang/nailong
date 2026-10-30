@@ -4,12 +4,16 @@
  *
  * 定位：把站内图库变成「能直接做梗图」的素材库。
  * 关键取舍：
- *  - 全部渲染在浏览器 canvas 完成，**不上传、不入库、不占服务端**（生产机只有 2vCPU/1.6GB）。
+ *  - 全部渲染在浏览器 canvas 完成，不上传、不入库、不占服务端（生产机只有 2vCPU/1.6GB）。
  *  - 底图优先用站内的 800px 缩略图，秒开且省流量；需要更清晰时可切「原图」。
  *  - 预览与导出共用同一套布局函数（utils/memeCanvas.ts），所见即所得。
+ *  - UI 完全走站点的纸感 token：浅色是暖米纸，深色是暖炭，不再是一块独立的暗色面板。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import AppIcon from '@/components/ui/AppIcon.vue'
+import UiModal from '@/components/ui/UiModal.vue'
+import { useToast } from '@/composables/useToast'
 import { getCategories, getFeatured, getImageById, getImages, type ImageItem } from '@/api/images'
 import { uploadImage } from '@/api/upload'
 import { useAuthStore } from '@/stores/auth'
@@ -34,9 +38,11 @@ import {
   type MemeLayout,
   type MemeSpec,
   type MemeTemplate,
+  type MemeTextBlock,
   type TextRole,
 } from '@/utils/memeCanvas'
 import {
+  ALL_STICKERS,
   HINTS,
   MEME_RECIPES,
   MOODS,
@@ -47,40 +53,66 @@ import {
   type MemeRecipe,
 } from '@/data/memeCopy'
 
-// ────────────────────────────── 状态 ──────────────────────────────
+// ────────────────────────────── 基础状态 ──────────────────────────────
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const toast = useToast()
+
+type ToastKind = 'success' | 'error' | 'info' | 'warning'
+function showToast(message: string, type: ToastKind = 'info') {
+  toast[type](message)
+}
 
 const spec = ref<MemeSpec>(createDefaultSpec())
 const baseImg = shallowRef<HTMLImageElement | null>(null)
+const baseSrc = ref<string | null>(null)
 const baseMeta = ref<{ label: string; w: number; h: number; origin: 'site' | 'local' | 'none' }>({
   label: '还没有选底图',
   w: 0,
   h: 0,
   origin: 'none',
 })
-const selected = ref<HitTarget>(null)
+const baseDataCache = ref<string | null>(null)
+const activeBaseId = ref<string | null>(null)
+const lastPicked = ref<ImageItem | null>(null)
 const useOriginal = ref(false)
+const selected = ref<HitTarget>(null)
+const panelTab = ref<'layout' | 'copy' | 'sticker' | 'filter'>('layout')
+const pickerOpen = ref(false)
+const showHelp = ref(false)
+const dragOver = ref(false)
+const drawerMode = ref(typeof window !== 'undefined' ? window.innerWidth < 1280 : false)
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const stageRef = ref<HTMLElement | null>(null)
 const stageSize = ref({ w: 640, h: 720 })
 const layoutRef = shallowRef<MemeLayout | null>(null)
 
-const toast = ref('')
-let toastTimer: number | undefined
-function showToast(msg: string) {
-  toast.value = msg
-  if (toastTimer) window.clearTimeout(toastTimer)
-  toastTimer = window.setTimeout(() => (toast.value = ''), 2200)
-}
-
 const hint = ref(HINTS[0])
 function rollHint() {
   hint.value = HINTS[Math.floor(Math.random() * HINTS.length)]
 }
+
+const PANEL_TABS: Array<{ key: 'layout' | 'copy' | 'sticker' | 'filter'; label: string; icon: string }> = [
+  { key: 'layout', label: '版式', icon: 'layout' },
+  { key: 'copy', label: '文案', icon: 'quote' },
+  { key: 'sticker', label: '贴纸', icon: 'smile' },
+  { key: 'filter', label: '滤镜', icon: 'filter' },
+]
+
+const GALLERY_SORTS: Array<{ key: 'latest' | 'popular' | 'featured'; label: string }> = [
+  { key: 'latest', label: '最新' },
+  { key: 'popular', label: '最热' },
+  { key: 'featured', label: '精选' },
+]
+
+const ALIGNS: Array<{ key: MemeTextBlock['align']; label: string }> = [
+  { key: 'left', label: '左' },
+  { key: 'center', label: '中' },
+  { key: 'right', label: '右' },
+]
 
 // ────────────────────────────── 画布尺寸与渲染 ──────────────────────────────
 
@@ -118,8 +150,10 @@ function render() {
     cvs.width = bw
     cvs.height = bh
   }
-  if (cvs.style.width !== `${w}px`) cvs.style.width = `${w}px`
-  if (cvs.style.height !== `${h}px`) cvs.style.height = `${h}px`
+  const widthPx = w + 'px'
+  const heightPx = h + 'px'
+  if (cvs.style.width !== widthPx) cvs.style.width = widthPx
+  if (cvs.style.height !== heightPx) cvs.style.height = heightPx
   const ctx = cvs.getContext('2d')
   if (!ctx) return
   ctx.setTransform(scale, 0, 0, scale, 0, 0)
@@ -128,38 +162,67 @@ function render() {
   drawMeme(ctx, layout, spec.value, baseImg.value, { selection: selected.value })
 }
 
-watch(spec, scheduleRender, { deep: true })
+watch(spec, () => {
+  scheduleRender()
+  scheduleCommit()
+  scheduleDraftSave()
+}, { deep: true })
 watch([fit, selected], scheduleRender)
 
-// 草稿自动保存：改动停下 900ms 后落盘一次，避免拖动过程中疯狂写 localStorage
-watch(
-  spec,
-  () => {
-    if (draftTimer) window.clearTimeout(draftTimer)
-    draftTimer = window.setTimeout(saveDraft, 900)
-  },
-  { deep: true },
-)
-watch(baseMeta, () => {
-  if (draftTimer) window.clearTimeout(draftTimer)
-  draftTimer = window.setTimeout(saveDraft, 900)
-})
+/** 画布文字用到了站点的自托管得意黑；等字体就绪再画，避免先量出一套窄字宽 */
+let fontsReady = false
+async function ensureFonts() {
+  if (fontsReady || typeof document === 'undefined' || !('fonts' in document)) return
+  try {
+    await document.fonts.load('16px "Smiley Sans"')
+    await document.fonts.ready
+  } catch {
+    /* 字体加载失败就退回系统字体，不影响出图 */
+  }
+  fontsReady = true
+  scheduleRender()
+  void nextTick().then(drawWall)
+}
 
 // ────────────────────────────── 尺寸自适应 ──────────────────────────────
 
 let ro: ResizeObserver | null = null
+let initializing = true
+
+function onResize() {
+  if (typeof window === 'undefined') return
+  drawerMode.value = window.innerWidth < 1280
+  if (!drawerMode.value) {
+    if (pickerOpen.value) pickerOpen.value = false
+    document.body.style.overflow = ''
+  }
+}
+
+watch(pickerOpen, (open) => {
+  if (typeof document === 'undefined') return
+  document.body.style.overflow = open && drawerMode.value ? 'hidden' : ''
+})
 
 onMounted(async () => {
   const el = stageRef.value
   if (el && typeof ResizeObserver !== 'undefined') {
     ro = new ResizeObserver((entries) => {
       const r = entries[0].contentRect
-      stageSize.value = { w: r.width - 24, h: r.height - 24 }
+      stageSize.value = {
+        w: Math.max(160, r.width - 10),
+        h: Math.max(220, r.height - 10),
+      }
     })
     ro.observe(el)
   }
+
   loadWorks()
-  await loadGallery()
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', onResize)
+
+  void ensureFonts()
+  await loadGallery(true)
+
   // 从详情页「做成表情包」进来：?image=<id> 直接把那张图铺成底图，
   // 比让用户在图库里再找一遍顺手得多。
   const fromDetail = typeof route.query.image === 'string' ? route.query.image : ''
@@ -169,24 +232,28 @@ onMounted(async () => {
       const item = r.data.data
       if (item) {
         lastPicked.value = item
-        loadBase(picFrom(item), item.title || '站内图片', 'site')
-        showToast('底图已就位，改两行字就能发')
+        activeBaseId.value = item.id
+        loadBase(picFrom(item), item.title || '站内图片', 'site', { commit: false })
+        showToast('底图已就位，改两行字就能发', 'success')
       }
     } catch {
-      showToast('那张图没能加载，先从图库挑一张吧')
+      showToast('那张图没能加载，先从图库挑一张吧', 'error')
     }
   } else {
     // 没有深链时，先把上次没做完的草稿接回来（刷新不丢）
     const draftState = loadDraft()
-    if (draftState !== 'none') showToast('已接回上次没做完的草稿 —— 想清空点「重来」')
+    if (draftState !== 'none') showToast('已接回上次没做完的草稿，想清空点「重来」')
     // 首屏别给一块空画布：图库一到位就自动铺一张最新图，进来就是一个「已成图」的状态
     if (draftState !== 'base' && !baseImg.value && gallery.value.length) {
       const first = gallery.value[0]
       lastPicked.value = first
-      loadBase(picFrom(first), first.title || '站内图片', 'site')
+      activeBaseId.value = first.id
+      loadBase(picFrom(first), first.title || '站内图片', 'site', { commit: false })
     }
   }
-  window.addEventListener('keydown', onKeydown)
+
+  initializing = false
+  resetHistory()
   await nextTick()
   scheduleRender()
   void drawWall()
@@ -194,37 +261,80 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   ro?.disconnect()
+  ro = null
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', onResize)
   if (rafId) window.cancelAnimationFrame(rafId)
-  if (toastTimer) window.clearTimeout(toastTimer)
+  if (draftTimer) window.clearTimeout(draftTimer)
+  if (historyTimer) window.clearTimeout(historyTimer)
+  if (searchTimer) window.clearTimeout(searchTimer)
+  if (typeof document !== 'undefined') document.body.style.overflow = ''
+  if (!initializing) saveDraft()
 })
 
+// ────────────────────────────── 快捷键 ──────────────────────────────
+
+function isTypingTarget(target: EventTarget | null) {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable
+}
+
 function onKeydown(e: KeyboardEvent) {
-  const target = e.target as HTMLElement | null
-  const typing =
-    !!target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)
+  if (showSubmit.value || showHelp.value) return
 
   if (e.key === 'Escape') {
+    if (pickerOpen.value) {
+      pickerOpen.value = false
+      return
+    }
     selected.value = null
     return
   }
-  if (typing) return
 
+  const typing = isTypingTarget(e.target)
   const mod = e.ctrlKey || e.metaKey
 
+  // 下载放在 typing 判断之前：在文本框里按 Ctrl+S 也应该保存图片，而不是弹浏览器保存网页。
   if (mod && (e.key === 's' || e.key === 'S')) {
     e.preventDefault()
     void download()
     return
   }
+
+  if (mod && (e.key === 'z' || e.key === 'Z')) {
+    if (typing) return
+    e.preventDefault()
+    if (e.shiftKey) redo()
+    else undo()
+    return
+  }
+  if (mod && (e.key === 'y' || e.key === 'Y')) {
+    if (typing) return
+    e.preventDefault()
+    redo()
+    return
+  }
+  if (typing) return
+
   if (mod && (e.key === 'd' || e.key === 'D')) {
     e.preventDefault()
     randomize()
     return
   }
+  if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+    e.preventDefault()
+    showHelp.value = true
+    return
+  }
   if ((e.key === 'Delete' || e.key === 'Backspace') && selected.value) {
     e.preventDefault()
     if (selected.value.kind === 'sticker') removeSticker(selected.value.id)
+    return
+  }
+  if ((e.key === '[' || e.key === ']') && selected.value) {
+    e.preventDefault()
+    bumpSize(e.key === ']' ? 6 : -6)
     return
   }
   // 1~7 直接切版式（顺序与右侧版式列表一致）
@@ -263,78 +373,282 @@ function nudge(key: string, step: number) {
   }
 }
 
-// ────────────────────────────── 底图 ──────────────────────────────
+// ────────────────────────────── 撤销 / 重做 ──────────────────────────────
 
-function loadBase(src: string, label: string, origin: 'site' | 'local') {
-  const el = new Image()
-  el.decoding = 'async'
-  el.onload = () => {
-    baseImg.value = el
-    baseMeta.value = { label, w: el.naturalWidth, h: el.naturalHeight, origin }
-    selected.value = null
-    scheduleRender()
-  }
-  el.onerror = () => showToast('这张图加载失败了，换一张试试')
-  el.src = src
+interface HistorySnapshot {
+  spec: string
+  baseSrc: string | null
+  baseLabel: string
+  baseOrigin: 'site' | 'local' | 'none'
+  useOriginal: boolean
+  activeBaseId: string | null
 }
+
+const history = ref<HistorySnapshot[]>([])
+const historyIndex = ref(-1)
+let historyTimer: number | undefined
+let restoringHistory = false
+const specJson = computed(() => JSON.stringify(spec.value))
+
+const pendingChanged = computed(() => {
+  const cur = history.value[historyIndex.value]
+  if (!cur) return true
+  return (
+    cur.spec !== specJson.value ||
+    cur.baseSrc !== baseSrc.value ||
+    cur.baseLabel !== baseMeta.value.label ||
+    cur.baseOrigin !== baseMeta.value.origin ||
+    cur.useOriginal !== useOriginal.value ||
+    cur.activeBaseId !== activeBaseId.value
+  )
+})
+const canUndo = computed(() => historyIndex.value > 0 || (historyIndex.value === 0 && pendingChanged.value))
+const canRedo = computed(
+  () => !pendingChanged.value && historyIndex.value >= 0 && historyIndex.value < history.value.length - 1,
+)
+
+function makeSnapshot(): HistorySnapshot {
+  return {
+    spec: specJson.value,
+    baseSrc: baseSrc.value,
+    baseLabel: baseMeta.value.label,
+    baseOrigin: baseMeta.value.origin,
+    useOriginal: useOriginal.value,
+    activeBaseId: activeBaseId.value,
+  }
+}
+
+function sameSnapshot(a: HistorySnapshot, b: HistorySnapshot) {
+  return (
+    a.spec === b.spec &&
+    a.baseSrc === b.baseSrc &&
+    a.baseLabel === b.baseLabel &&
+    a.baseOrigin === b.baseOrigin &&
+    a.useOriginal === b.useOriginal &&
+    a.activeBaseId === b.activeBaseId
+  )
+}
+
+function commitHistory() {
+  if (restoringHistory || initializing) return
+  const snap = makeSnapshot()
+  const cur = history.value[historyIndex.value]
+  if (cur && sameSnapshot(cur, snap)) return
+  history.value = history.value.slice(0, historyIndex.value + 1)
+  history.value.push(snap)
+  if (history.value.length > 24) history.value.shift()
+  historyIndex.value = history.value.length - 1
+}
+
+function scheduleCommit() {
+  if (restoringHistory || initializing) return
+  if (historyTimer) window.clearTimeout(historyTimer)
+  historyTimer = window.setTimeout(commitHistory, 650)
+}
+
+function resetHistory() {
+  history.value = []
+  historyIndex.value = -1
+  commitHistory()
+}
+
+function applySnapshot(snap: HistorySnapshot) {
+  restoringHistory = true
+  spec.value = JSON.parse(snap.spec) as MemeSpec
+  selected.value = null
+  useOriginal.value = snap.useOriginal
+  activeBaseId.value = snap.activeBaseId
+  if (snap.baseSrc && snap.baseSrc !== baseSrc.value) {
+    const picked = snap.activeBaseId
+      ? gallery.value.find((item) => item.id === snap.activeBaseId) ?? null
+      : null
+    lastPicked.value = picked
+    loadBase(snap.baseSrc, snap.baseLabel, snap.baseOrigin === 'local' ? 'local' : 'site', {
+      commit: false,
+      cache: snap.baseOrigin === 'local' ? snap.baseSrc : null,
+    })
+  } else if (!snap.baseSrc && baseSrc.value) {
+    clearBase()
+  }
+  nextTick(() => {
+    restoringHistory = false
+    scheduleRender()
+  })
+}
+
+function undo() {
+  if (historyTimer) {
+    window.clearTimeout(historyTimer)
+    historyTimer = undefined
+  }
+  commitHistory()
+  if (historyIndex.value <= 0) return
+  historyIndex.value -= 1
+  const snap = history.value[historyIndex.value]
+  if (snap) {
+    applySnapshot(snap)
+    showToast('已撤销')
+  }
+}
+
+function redo() {
+  if (historyIndex.value < 0 || historyIndex.value >= history.value.length - 1) return
+  historyIndex.value += 1
+  const snap = history.value[historyIndex.value]
+  if (snap) {
+    applySnapshot(snap)
+    showToast('已重做')
+  }
+}
+
+// ────────────────────────────── 底图 ──────────────────────────────
 
 function picFrom(item: ImageItem): string {
   if (useOriginal.value) return item.url
   return item.thumbnailUrl || item.thumbnailSmUrl || item.url
 }
 
-/** 记住最后一次点选的站内图，切换「用原图」时可以原地重载 */
-const lastPicked = ref<ImageItem | null>(null)
-
-function pickFromGallery(item: ImageItem) {
-  lastPicked.value = item
-  loadBase(picFrom(item), item.title || '站内图片', 'site')
-  pickerOpen.value = false
-  showToast('已设为底图，拖文字试试')
+function loadBase(
+  src: string,
+  label: string,
+  origin: 'site' | 'local',
+  opts: { commit?: boolean; cache?: string | null } = {},
+) {
+  const commit = opts.commit !== false
+  const el = new Image()
+  el.decoding = 'async'
+  baseSrc.value = src
+  baseMeta.value = { ...baseMeta.value, label, origin }
+  baseDataCache.value = opts.cache ?? (origin === 'local' ? src : null)
+  el.onload = () => {
+    if (baseSrc.value !== src) return
+    baseImg.value = el
+    baseMeta.value = { label, w: el.naturalWidth, h: el.naturalHeight, origin }
+    if (origin === 'local' && !opts.cache) {
+      // 本地原图可能很大，草稿/作品只留 1000px 的缩略版，别把 localStorage 撑爆
+      window.setTimeout(() => {
+        if (baseSrc.value === src) baseDataCache.value = downscale(el, 1000)
+      }, 0)
+    }
+    scheduleRender()
+  }
+  el.onerror = () => showToast('这张图加载失败了，换一张试试', 'error')
+  el.src = src
+  if (commit) {
+    scheduleCommit()
+    scheduleDraftSave()
+  }
+  scheduleRender()
 }
 
-watch(useOriginal, () => {
-  if (baseMeta.value.origin === 'site' && lastPicked.value) {
-    loadBase(picFrom(lastPicked.value), lastPicked.value.title || '站内图片', 'site')
-  }
+function clearBase() {
+  baseImg.value = null
+  baseSrc.value = null
+  baseDataCache.value = null
+  baseMeta.value = { label: '还没有选底图', w: 0, h: 0, origin: 'none' }
+  activeBaseId.value = null
+  selected.value = null
+  scheduleRender()
+}
+
+function pickFromGallery(item: ImageItem, opts: { quiet?: boolean } = {}) {
+  lastPicked.value = item
+  activeBaseId.value = item.id
+  selected.value = null
+  loadBase(picFrom(item), item.title || '站内图片', 'site')
+  pickerOpen.value = false
+  if (!opts.quiet) showToast('已设为底图，拖一下文字试试')
+}
+
+const basePreview = computed(() => {
+  if (baseMeta.value.origin === 'site' && lastPicked.value) return thumbOf(lastPicked.value)
+  return baseDataCache.value || baseSrc.value
 })
 
 const fileInput = ref<HTMLInputElement | null>(null)
 
-// ────────────────────────────── 一键出片（配方） ──────────────────────────────
+function handleLocalFile(file: File) {
+  if (!file.type.startsWith('image/')) {
+    showToast('只能选图片文件', 'warning')
+    return
+  }
+  if (file.size > 12 * 1024 * 1024) {
+    showToast('图片太大了（上限 12MB）', 'warning')
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    if (typeof reader.result !== 'string') return
+    lastPicked.value = null
+    activeBaseId.value = null
+    selected.value = null
+    normaliseLocalImage(reader.result, file.name, file.size)
+    pickerOpen.value = false
+    showToast('本地图片已就位（不会上传到服务器）', 'success')
+  }
+  reader.readAsDataURL(file)
+}
 
-/**
- * 配方 = 版式 + 比例 + 滤镜 + 文案 + 贴纸位置，一次全给你。
- * 对没耐心排版的人（大多数人）来说，这一排按钮才是这个工具的入口。
- */
-function specFromRecipe(current: MemeSpec, r: MemeRecipe): MemeSpec {
-  const base = applyTemplate(current, r.template)
-  return {
-    ...base,
-    aspect: r.aspect,
-    filter: { preset: r.filter, brightness: 1, contrast: 1, saturate: 1 },
-    texts: base.texts.map((t) => ({ ...t, content: r.texts[t.role] ?? '' })),
-    stickers: (r.stickers ?? []).map((s) => ({
-      id: uid('s'),
-      emoji: s.emoji,
-      x: s.x,
-      y: s.y,
-      size: s.size,
-      rotation: 0,
-    })),
+/** 本地大图先缩到 2000px 以内：canvas 更快，撤销历史也不会囤一堆 12MB 的 data URL */
+function normaliseLocalImage(src: string, name: string, bytes: number) {
+  const el = new Image()
+  el.onload = () => {
+    const maxEdge = Math.max(el.naturalWidth, el.naturalHeight)
+    if (maxEdge <= 2000 && bytes <= 3.5 * 1024 * 1024) {
+      loadBase(src, name, 'local')
+      return
+    }
+    const scale = Math.min(1, 2000 / maxEdge)
+    const c = document.createElement('canvas')
+    c.width = Math.max(1, Math.round(el.naturalWidth * scale))
+    c.height = Math.max(1, Math.round(el.naturalHeight * scale))
+    const ctx = c.getContext('2d')
+    if (!ctx) {
+      loadBase(src, name, 'local')
+      return
+    }
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, c.width, c.height)
+    ctx.drawImage(el, 0, 0, c.width, c.height)
+    loadBase(c.toDataURL('image/jpeg', 0.9), name, 'local')
+  }
+  el.onerror = () => showToast('这张图读不出来，换一张试试', 'error')
+  el.src = src
+}
+
+function onFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) handleLocalFile(file)
+  input.value = ''
+}
+
+function onDragOver(e: DragEvent) {
+  if (e.dataTransfer?.types?.includes('Files')) {
+    e.preventDefault()
+    dragOver.value = true
   }
 }
 
-function applyRecipe(r: MemeRecipe) {
-  spec.value = specFromRecipe(spec.value, r)
-  selected.value = null
-  rollHint()
-  showToast(`配方已套用：${r.name} —— 直接下载，或者接着改`)
+function onDragLeave(e: DragEvent) {
+  const el = e.currentTarget as HTMLElement | null
+  if (el && e.relatedTarget instanceof Node && el.contains(e.relatedTarget)) return
+  dragOver.value = false
 }
 
-// ────────────────────────────── 灵感墙（实时渲染的成品预览） ──────────────────────────────
+function onDrop(e: DragEvent) {
+  e.preventDefault()
+  dragOver.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) handleLocalFile(file)
+}
 
-
+watch(useOriginal, () => {
+  if (restoringHistory) return
+  if (baseMeta.value.origin === 'site' && lastPicked.value) {
+    loadBase(picFrom(lastPicked.value), lastPicked.value.title || '站内图片', 'site')
+  }
+})
 
 // ────────────────────────────── 草稿自动保存 ──────────────────────────────
 
@@ -345,6 +659,7 @@ function applyRecipe(r: MemeRecipe) {
  */
 const DRAFT_KEY = 'nailong.studio.draft.v1'
 let draftTimer: number | undefined
+const draftSavedAt = ref(0)
 
 interface StudioDraft {
   spec: MemeSpec
@@ -352,26 +667,65 @@ interface StudioDraft {
   baseData?: string
   label?: string
   origin?: 'site' | 'local'
+  activeBaseId?: string | null
+  useOriginal?: boolean
   savedAt: number
+}
+
+function isPristine() {
+  const s = spec.value
+  if (s.template !== 'classic' || s.aspect !== 'auto' || s.stickers.length) return false
+  if (s.filter.preset !== 'none' || s.filter.brightness !== 1 || s.filter.contrast !== 1 || s.filter.saturate !== 1) {
+    return false
+  }
+  if (s.texts.length !== 2) return false
+  const top = s.texts.find((t) => t.role === 'top')
+  const bottom = s.texts.find((t) => t.role === 'bottom')
+  if (!top || !bottom) return false
+  if (top.content.trim() !== '我很好' || bottom.content.trim() !== '只是精神状态进化成了奶蛙') return false
+  return s.texts.every(
+    (t) =>
+      t.x === null &&
+      t.y === null &&
+      t.size === 96 &&
+      t.rotation === 0 &&
+      t.color === '#ffffff' &&
+      t.stroke === true &&
+      (t.font ?? 'bold') === 'bold' &&
+      (t.strokeColor ?? '#000000') === '#000000',
+  )
+}
+
+function scheduleDraftSave() {
+  if (initializing) return
+  if (draftTimer) window.clearTimeout(draftTimer)
+  draftTimer = window.setTimeout(saveDraft, 900)
 }
 
 function saveDraft() {
   try {
+    if (isPristine() && !baseSrc.value) {
+      localStorage.removeItem(DRAFT_KEY)
+      draftSavedAt.value = 0
+      return
+    }
     const draft: StudioDraft = {
       spec: JSON.parse(JSON.stringify(spec.value)) as MemeSpec,
+      activeBaseId: activeBaseId.value,
+      useOriginal: useOriginal.value,
       savedAt: Date.now(),
     }
-    const last = lastPicked.value
-    if (baseMeta.value.origin === 'site' && last) {
-      draft.baseUrl = picFrom(last)
+    if (baseMeta.value.origin === 'site' && baseSrc.value) {
+      draft.baseUrl = baseSrc.value
       draft.label = baseMeta.value.label
       draft.origin = 'site'
-    } else if (baseImg.value) {
-      draft.baseData = downscale(baseImg.value, 1000)
+    } else if (baseMeta.value.origin === 'local' && (baseDataCache.value || baseSrc.value)) {
+      draft.baseData = baseDataCache.value || baseSrc.value || ''
       draft.label = baseMeta.value.label
       draft.origin = 'local'
     }
     localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+    draftSavedAt.value = Date.now()
   } catch {
     /* 空间不够就放弃草稿，绝不能影响正在做的事 */
   }
@@ -383,6 +737,7 @@ function clearDraft() {
   } catch {
     /* ignore */
   }
+  draftSavedAt.value = 0
 }
 
 /** 返回值告诉调用方恢复到了什么程度（决定要不要再自动铺一张图库最新图） */
@@ -393,12 +748,17 @@ function loadDraft(): 'none' | 'spec' | 'base' {
     const d = JSON.parse(raw) as StudioDraft
     if (!d?.spec || !Array.isArray(d.spec.texts)) return 'none'
     spec.value = d.spec
+    activeBaseId.value = d.activeBaseId ?? null
+    lastPicked.value = d.activeBaseId
+      ? gallery.value.find((item) => item.id === d.activeBaseId) ?? null
+      : null
+    useOriginal.value = !!d.useOriginal
     if (d.baseUrl) {
-      loadBase(d.baseUrl, d.label || '草稿底图', 'site')
+      loadBase(d.baseUrl, d.label || '草稿底图', 'site', { commit: false })
       return 'base'
     }
     if (d.baseData) {
-      loadBase(d.baseData, d.label || '草稿底图', 'local')
+      loadBase(d.baseData, d.label || '草稿底图', 'local', { commit: false, cache: d.baseData })
       return 'base'
     }
     return 'spec'
@@ -407,69 +767,109 @@ function loadDraft(): 'none' | 'spec' | 'base' {
   }
 }
 
-function onFileChange(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  if (!file.type.startsWith('image/')) {
-    showToast('只能选图片文件')
-    return
-  }
-  if (file.size > 12 * 1024 * 1024) {
-    showToast('图片太大了（上限 12MB）')
-    return
-  }
-  const reader = new FileReader()
-  reader.onload = () => {
-    if (typeof reader.result === 'string') {
-      loadBase(reader.result, file.name, 'local')
-      pickerOpen.value = false
-      showToast('本地图片已就位（不会上传到服务器）')
-    }
-  }
-  reader.readAsDataURL(file)
-  input.value = ''
-}
+const draftStatus = computed(() => {
+  if (!draftSavedAt.value) return '自动保存草稿'
+  const d = new Date(draftSavedAt.value)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return '草稿已保存 ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+})
 
 // ────────────────────────────── 站内图库 ──────────────────────────────
 
 const gallery = ref<ImageItem[]>([])
 const gallerySort = ref<'latest' | 'popular' | 'featured'>('latest')
+const gallerySearch = ref('')
 const galleryLoading = ref(false)
-const pickerOpen = ref(false)
+const galleryMoreLoading = ref(false)
+const galleryError = ref(false)
+const galleryPage = ref(1)
+const galleryTotalPages = ref(1)
+const galleryTotal = ref(0)
+let gallerySeq = 0
+let searchTimer: number | undefined
 
-async function loadGallery() {
-  galleryLoading.value = true
+const galleryHasMore = computed(
+  () => !galleryLoading.value && !galleryError.value && galleryPage.value < galleryTotalPages.value,
+)
+
+async function loadGallery(reset = true) {
+  const seq = ++gallerySeq
+  if (reset) {
+    galleryLoading.value = true
+    galleryPage.value = 1
+  } else {
+    galleryMoreLoading.value = true
+  }
+  galleryError.value = false
+
   try {
-    if (gallerySort.value === 'featured') {
-      const r = await getFeatured({ page: 1, size: 24 })
-      gallery.value = r.data.data ?? []
+    const search = gallerySearch.value.trim()
+    const page = reset ? 1 : galleryPage.value + 1
+    let items: ImageItem[] = []
+    let totalPages = 1
+    let total = 0
+
+    if (gallerySort.value === 'featured' && !search) {
+      const r = await getFeatured({ page, size: 24 })
+      items = r.data.data ?? []
+      totalPages = r.data.meta?.totalPages ?? 1
+      total = r.data.meta?.total ?? items.length
     } else {
       const sort = gallerySort.value === 'popular' ? 'popular' : 'latest'
-      const r = await getImages({ page: 1, size: 24, sort })
-      gallery.value = r.data.data ?? []
+      const r = await getImages({
+        page,
+        size: 24,
+        search: search || undefined,
+        sort,
+      })
+      items = r.data.data ?? []
+      totalPages = r.data.meta?.totalPages ?? 1
+      total = r.data.meta?.total ?? items.length
     }
+
+    if (seq !== gallerySeq) return
+    gallery.value = reset ? items : [...gallery.value, ...items]
+    galleryPage.value = page
+    galleryTotalPages.value = totalPages
+    galleryTotal.value = total
   } catch {
-    gallery.value = []
-    showToast('图库没拉到，检查一下网络')
+    if (seq !== gallerySeq) return
+    if (reset) gallery.value = []
+    galleryError.value = true
+    showToast('图库没拉到，检查一下网络', 'error')
   } finally {
-    galleryLoading.value = false
+    if (seq === gallerySeq) {
+      galleryLoading.value = false
+      galleryMoreLoading.value = false
+    }
   }
 }
 
-watch(gallerySort, loadGallery)
+function loadNextGalleryPage() {
+  if (!galleryHasMore.value || galleryMoreLoading.value) return
+  void loadGallery(false)
+}
+
+watch(gallerySort, () => void loadGallery(true))
+watch(gallerySearch, () => {
+  if (gallerySearch.value.trim() && gallerySort.value === 'featured') {
+    gallerySort.value = 'latest'
+  }
+  if (searchTimer) window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(() => void loadGallery(true), 380)
+})
 
 function thumbOf(item: ImageItem): string {
   return item.thumbnailSmUrl || item.thumbnailUrl || item.url
 }
 
-function randomFromGallery() {
+function randomFromGallery(silent = false) {
   if (!gallery.value.length) {
-    showToast('图库还在加载，稍等一下')
+    showToast('图库还在加载，稍等一下', 'warning')
     return
   }
   const item = gallery.value[Math.floor(Math.random() * gallery.value.length)]
-  pickFromGallery(item)
+  pickFromGallery(item, { quiet: silent })
 }
 
 // ────────────────────────────── 模板 / 文案 ──────────────────────────────
@@ -521,7 +921,7 @@ function selectTemplate(key: MemeTemplate) {
   }))
   spec.value = next
   selected.value = null
-  showToast(`已切换版式：${TEMPLATES.find((t) => t.key === key)?.name}`)
+  showToast('已切换版式：' + (TEMPLATES.find((t) => t.key === key)?.name ?? ''))
 }
 
 const mood = ref<MemeMood | 'all'>('all')
@@ -575,6 +975,20 @@ function addSticker(emoji: string) {
 function removeSticker(id: string) {
   spec.value.stickers = spec.value.stickers.filter((s) => s.id !== id)
   if (selected.value?.kind === 'sticker' && selected.value.id === id) selected.value = null
+}
+
+function duplicateSticker(id: string) {
+  const s = spec.value.stickers.find((x) => x.id === id)
+  if (!s) return
+  const copy = {
+    ...s,
+    id: uid('s'),
+    x: clamp(s.x + 0.045, 0, 1),
+    y: clamp(s.y + 0.045, 0, 1),
+    rotation: s.rotation + 4,
+  }
+  spec.value.stickers.push(copy)
+  selected.value = { kind: 'sticker', id: copy.id }
 }
 
 // ────────────────────────────── 拖拽 ──────────────────────────────
@@ -645,6 +1059,13 @@ function onPointerUp(e: PointerEvent) {
   }
 }
 
+function onCanvasWheel(e: WheelEvent) {
+  const s = selectedSticker.value
+  if (!s) return
+  e.preventDefault()
+  s.size = clamp(s.size + (e.deltaY < 0 ? 10 : -10), 40, 460)
+}
+
 // ────────────────────────────── 选中对象编辑 ──────────────────────────────
 
 const selectedText = computed(() => {
@@ -670,6 +1091,13 @@ const focusedStickers = computed(() => {
   return s ? [s] : []
 })
 
+const selectedLabel = computed(() => {
+  if (!selected.value) return ''
+  if (selected.value.kind === 'sticker') return '贴纸'
+  const t = selectedText.value
+  return t ? roleLabels.value[t.role] : '文字'
+})
+
 function resetPosition() {
   const t = selectedText.value
   if (!t) return
@@ -678,9 +1106,29 @@ function resetPosition() {
   showToast('已回到版式默认位置')
 }
 
-const SWATCHES = ['#ffffff', '#facc15', '#0f172a', '#ef4444', '#22d3ee', '#f472b6', '#22c55e', '#a78bfa']
+function bumpSize(delta: number) {
+  const t = selectedText.value
+  if (t) {
+    t.size = clamp(t.size + delta, 30, 220)
+    return
+  }
+  const s = selectedSticker.value
+  if (s) s.size = clamp(s.size + delta, 40, 460)
+}
+
+function onTextColor(e: Event, block: MemeTextBlock) {
+  const value = (e.target as HTMLInputElement).value
+  if (value) block.color = value
+}
+
+function onStrokeColor(e: Event, block: MemeTextBlock) {
+  const value = (e.target as HTMLInputElement).value
+  if (value) block.strokeColor = value
+}
+
+const SWATCHES = ['#ffffff', '#efbe4d', '#181510', '#d9552b', '#2c6b57', '#6b91a8', '#cf8791', '#a78bfa']
 /** 描边色：默认第一项就是经典黑边，顺序不要动 */
-const STROKE_COLORS = ['#000000', '#ffffff', '#facc15', '#2563eb']
+const STROKE_COLORS = ['#000000', '#ffffff', '#efbe4d', '#d9552b']
 
 // ────────────────────────────── 一键灵感 ──────────────────────────────
 
@@ -693,29 +1141,59 @@ function randomize() {
     ...t,
     content: t.role === 'top' ? copy.top : copy.bottom,
   }))
-  const moods: MemeAspect[] = ['auto', '1:1', '4:5']
-  next.aspect = moods[Math.floor(Math.random() * moods.length)]
+  const aspects: MemeAspect[] = ['auto', '1:1', '4:5']
+  next.aspect = aspects[Math.floor(Math.random() * aspects.length)]
   next.filter = {
     preset: FILTER_PRESETS[Math.floor(Math.random() * FILTER_PRESETS.length)].key,
     brightness: 1,
     contrast: 1,
     saturate: 1,
   }
-  next.stickers = Math.random() > 0.45
-    ? [{
-        id: uid('s'),
-        emoji: randomSticker(),
-        x: 0.78 + Math.random() * 0.08,
-        y: 0.22 + Math.random() * 0.1,
-        size: 170,
-        rotation: Math.random() * 14 - 7,
-      }]
-    : []
+  next.stickers =
+    Math.random() > 0.45
+      ? [
+          {
+            id: uid('s'),
+            emoji: randomSticker(),
+            x: 0.78 + Math.random() * 0.08,
+            y: 0.22 + Math.random() * 0.1,
+            size: 170,
+            rotation: Math.random() * 14 - 7,
+          },
+        ]
+      : []
   spec.value = next
   selected.value = null
   rollHint()
-  if (gallery.value.length) randomFromGallery()
-  showToast('来，随机一发')
+  if (gallery.value.length) randomFromGallery(true)
+  showToast('换了一套版式和文案')
+}
+
+// ────────────────────────────── 配方 ──────────────────────────────
+
+function specFromRecipe(current: MemeSpec, r: MemeRecipe): MemeSpec {
+  const base = applyTemplate(current, r.template)
+  return {
+    ...base,
+    aspect: r.aspect,
+    filter: { preset: r.filter, brightness: 1, contrast: 1, saturate: 1 },
+    texts: base.texts.map((t) => ({ ...t, content: r.texts[t.role] ?? '' })),
+    stickers: (r.stickers ?? []).map((s) => ({
+      id: uid('s'),
+      emoji: s.emoji,
+      x: s.x,
+      y: s.y,
+      size: s.size,
+      rotation: 0,
+    })),
+  }
+}
+
+function applyRecipe(r: MemeRecipe, quiet = false) {
+  spec.value = specFromRecipe(spec.value, r)
+  selected.value = null
+  rollHint()
+  if (!quiet) showToast('配方已套用：' + r.name + ' —— 直接下载，或者接着改')
 }
 
 // ────────────────────────────── 导出 ──────────────────────────────
@@ -732,7 +1210,7 @@ function downscale(img: HTMLImageElement, maxW: number, type = 'image/jpeg', q =
   c.height = h
   const ctx = c.getContext('2d')
   if (!ctx) return ''
-  ctx.fillStyle = '#111827'
+  ctx.fillStyle = '#f3ede1'
   ctx.fillRect(0, 0, w, h)
   ctx.drawImage(img, 0, 0, w, h)
   return c.toDataURL(type, q)
@@ -744,10 +1222,28 @@ function buildBlob(): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
 }
 
+function specSlug() {
+  const first = spec.value.texts.map((t) => t.content.trim()).find(Boolean) ?? ''
+  const clean = first
+    .replace(/[\\/:*?"<>|#%&{}$!'@+=]+/g, '')
+    .replace(/\s+/g, '-')
+    .slice(0, 18)
+    .replace(/^-+|-+$/g, '')
+  return clean || 'meme'
+}
+
 function fileName(ext = 'png') {
   const d = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `nailong-meme-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.${ext}`
+  const stamp =
+    String(d.getFullYear()) +
+    pad(d.getMonth() + 1) +
+    pad(d.getDate()) +
+    '-' +
+    pad(d.getHours()) +
+    pad(d.getMinutes()) +
+    pad(d.getSeconds())
+  return 'nailong-' + specSlug() + '-' + stamp + '.' + ext
 }
 
 async function download() {
@@ -756,7 +1252,7 @@ async function download() {
   try {
     const blob = await buildBlob()
     if (!blob) {
-      showToast('导出失败了，换个浏览器试试')
+      showToast('导出失败了，换个浏览器试试', 'error')
       return
     }
     const url = URL.createObjectURL(blob)
@@ -768,7 +1264,7 @@ async function download() {
     a.remove()
     window.setTimeout(() => URL.revokeObjectURL(url), 4000)
     saveWork()
-    showToast(`已导出 PNG（${exportScale.value}x）`)
+    showToast('已导出 PNG · ' + exportScale.value + 'x，也收进「我的作品」了', 'success')
   } finally {
     busy.value = false
   }
@@ -783,12 +1279,13 @@ async function copyToClipboard() {
     const ClipboardItemCtor = (window as unknown as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
     if (navigator.clipboard && ClipboardItemCtor) {
       await navigator.clipboard.write([new ClipboardItemCtor({ 'image/png': blob })])
-      showToast('已复制到剪贴板，直接粘贴就能发')
+      saveWork()
+      showToast('已复制到剪贴板，直接粘贴就能发', 'success')
     } else {
-      showToast('这个浏览器不支持复制图片，用下载吧')
+      showToast('这个浏览器不支持复制图片，用下载吧', 'warning')
     }
   } catch {
-    showToast('复制被浏览器拦下了，用下载吧')
+    showToast('复制被浏览器拦下了，用下载吧', 'error')
   } finally {
     busy.value = false
   }
@@ -804,7 +1301,7 @@ async function share() {
       await nav.share({ files: [file], title: '奶龙表情包', text: '我做的表情包，拿去用' })
       saveWork()
     } else {
-      showToast('这台设备不支持系统分享，先下载吧')
+      showToast('这台设备不支持系统分享，先下载吧', 'warning')
     }
   } catch {
     /* 用户取消分享，静默 */
@@ -816,7 +1313,11 @@ async function share() {
 interface StudioWork {
   id: string
   thumb: string
+  /** 站内图存 URL；本地图存缩略 data URL。旧版本的作品里这里只有 data URL。 */
   base: string | null
+  baseOrigin?: 'site' | 'local'
+  activeBaseId?: string | null
+  useOriginal?: boolean
   spec: MemeSpec
   createdAt: number
 }
@@ -854,11 +1355,23 @@ function saveWork() {
   const { W, H } = fit.value
   const thumbCanvas = renderToCanvas(spec.value, baseImg.value, W, H, 340 / W)
   const thumb = thumbCanvas.toDataURL('image/jpeg', 0.72)
-  const base = baseImg.value ? downscale(baseImg.value, 900) : null
+  const origin = baseMeta.value.origin
+  let base: string | null = null
+  let baseOrigin: 'site' | 'local' | undefined
+  if (origin === 'site' && baseSrc.value) {
+    base = baseSrc.value
+    baseOrigin = 'site'
+  } else if (origin === 'local') {
+    base = baseDataCache.value || (baseImg.value ? downscale(baseImg.value, 900) : null)
+    baseOrigin = 'local'
+  }
   const work: StudioWork = {
     id: uid('w'),
     thumb,
     base,
+    baseOrigin,
+    activeBaseId: activeBaseId.value,
+    useOriginal: useOriginal.value,
     spec: JSON.parse(JSON.stringify(spec.value)) as MemeSpec,
     createdAt: Date.now(),
   }
@@ -869,8 +1382,16 @@ function saveWork() {
 function restoreWork(w: StudioWork) {
   spec.value = JSON.parse(JSON.stringify(w.spec)) as MemeSpec
   selected.value = null
+  lastPicked.value = w.activeBaseId
+    ? gallery.value.find((item) => item.id === w.activeBaseId) ?? null
+    : null
+  activeBaseId.value = w.activeBaseId ?? null
+  useOriginal.value = !!w.useOriginal
   if (w.base) {
-    loadBase(w.base, '作品底图', 'local')
+    const origin = w.baseOrigin ?? 'local'
+    loadBase(w.base, '作品底图', origin, { cache: origin === 'local' ? w.base : null })
+  } else {
+    clearBase()
   }
   showToast('已载入这件作品，可以接着改')
 }
@@ -880,14 +1401,25 @@ function deleteWork(id: string) {
   persistWorks()
 }
 
+function formatWorkDate(value: number) {
+  return new Date(value).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 function resetAll() {
   spec.value = createDefaultSpec()
   selected.value = null
-  baseImg.value = null
-  baseMeta.value = { label: '还没有选底图', w: 0, h: 0, origin: 'none' }
   lastPicked.value = null
+  activeBaseId.value = null
+  useOriginal.value = false
+  clearBase()
   clearDraft()
-  showToast('已清空，重新来一张')
+  rollHint()
+  showToast('已清空，撤销可以找回')
 }
 
 // ────────────────────────────── 灵感墙（实时渲染的成品预览） ──────────────────────────────
@@ -896,9 +1428,6 @@ function resetAll() {
  * 与其放一堆静态示意图，不如让引擎当场画：8 个配方 × 站内图库的缩略图，
  * 进页面就能看到「这个工具能做出什么」，点一下就换到主画布接着改。
  * 用 300px 缩略图渲染，整面墙的流量比一张原图还小。
- *
- * 注意：这段必须放在 gallery 声明之后 —— `watch(computed)` 会在初始化时就求值一次，
- * 放在前面会直接踩到 TDZ（Cannot access 'x' before initialization）。
  */
 const wallCanvases = new Map<string, HTMLCanvasElement>()
 
@@ -912,10 +1441,10 @@ const wallItems = computed(() => {
   return MEME_RECIPES.map((recipe, i) => {
     const image = pool[(i * 3 + 1) % pool.length]
     return {
-      key: `${recipe.id}-${image.id}`,
+      key: recipe.id + '-' + image.id,
       recipe,
       image,
-      thumb: image.thumbnailSmUrl || image.thumbnailUrl || image.url,
+      thumb: thumbOf(image),
     }
   })
 })
@@ -938,29 +1467,33 @@ function loadThumb(src: string): Promise<HTMLImageElement | null> {
 }
 
 async function drawWall() {
-  for (const item of wallItems.value) {
-    const cvs = wallCanvases.get(item.key)
-    if (!cvs) continue
-    const img = await loadThumb(item.thumb)
-    // 图片是异步加载的，回来时组件可能已经重渲染，必须重新取一次
-    const cvs2 = wallCanvases.get(item.key)
-    if (!img || !cvs2) continue
-    const preview = specFromRecipe(createDefaultSpec(), item.recipe)
-    const { W, H } = computeCanvasSize(preview.aspect, img)
-    const scale = 0.34 * Math.min(2, window.devicePixelRatio || 1)
-    cvs2.width = Math.round(W * scale)
-    cvs2.height = Math.round(H * scale)
-    const ctx = cvs2.getContext('2d')
-    if (!ctx) continue
-    ctx.setTransform(scale, 0, 0, scale, 0, 0)
-    const layout = layoutMeme(ctx, preview, W, H)
-    drawMeme(ctx, layout, preview, img)
-  }
+  if (typeof document === 'undefined') return
+  await Promise.all(
+    wallItems.value.map(async (item) => {
+      const cvs = wallCanvases.get(item.key)
+      if (!cvs) return
+      const img = await loadThumb(item.thumb)
+      // 图片是异步加载的，回来时组件可能已经重渲染，必须重新取一次
+      const cvs2 = wallCanvases.get(item.key)
+      if (!img || !cvs2) return
+      const preview = specFromRecipe(createDefaultSpec(), item.recipe)
+      const { W, H } = computeCanvasSize(preview.aspect, img)
+      const scale = 0.34 * Math.min(2, window.devicePixelRatio || 1)
+      cvs2.width = Math.round(W * scale)
+      cvs2.height = Math.round(H * scale)
+      const ctx = cvs2.getContext('2d')
+      if (!ctx) return
+      ctx.setTransform(scale, 0, 0, scale, 0, 0)
+      const layout = layoutMeme(ctx, preview, W, H)
+      drawMeme(ctx, layout, preview, img)
+    }),
+  )
 }
 
 function applyWall(item: { recipe: MemeRecipe; image: ImageItem }) {
   lastPicked.value = item.image
-  applyRecipe(item.recipe)
+  activeBaseId.value = item.image.id
+  applyRecipe(item.recipe, true)
   loadBase(picFrom(item.image), item.image.title || '站内图片', 'site')
   showToast('已换到你的画布 —— 改两个字就是你的了')
 }
@@ -972,7 +1505,7 @@ watch(wallItems, () => {
 // ────────────────────────────── 投稿到站内 ──────────────────────────────
 
 /**
- * 闭环：工坊做出来的图，走**既有**的上传接口进站内的审核流
+ * 闭环：工坊做出来的图，走既有的上传接口进站内的审核流
  * （POST /api/upload，jpeg/png/webp ≤ 10MB，落库为 pending，管理员通过后才公开）。
  * 这里不新增任何后端能力，只把「做图」和「看图」接起来。
  */
@@ -980,6 +1513,7 @@ const showSubmit = ref(false)
 const submitting = ref(false)
 const submitDone = ref(false)
 const submitPreview = ref('')
+const submitProgress = ref(0)
 const categories = ref<Array<{ id: string; name: string; slug: string }>>([])
 const submitForm = reactive({ title: '', description: '', categoryIds: [] as string[] })
 
@@ -990,12 +1524,16 @@ function defaultTitle(): string {
     spec.value.texts.find((t) => t.role === 'bottom' && t.content.trim())?.content ||
     ''
   const line = first.split('\n')[0].trim().slice(0, 18)
-  return line ? `${line} · 表情包` : '我的奶龙表情包'
+  return line ? line + ' · 表情包' : '我的奶龙表情包'
 }
 
 function defaultDescription(): string {
-  const from = baseMeta.value.origin === 'site' && baseMeta.value.label ? `，底图取自站内《${baseMeta.value.label}》` : ''
-  return `用奶龙表情包工坊做的${from}。工坊：https://nailonghub.top/studio`
+  const from =
+    baseMeta.value.origin === 'site' && baseMeta.value.label
+      ? '，底图取自站内《' + baseMeta.value.label + '》'
+      : ''
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://nailonghub.top'
+  return '用奶龙表情包工坊做的' + from + '。工坊：' + origin + '/studio'
 }
 
 async function loadCategories() {
@@ -1009,13 +1547,15 @@ async function loadCategories() {
 }
 
 function openSubmit() {
+  pickerOpen.value = false
   if (!authStore.isLoggedIn) {
-    showToast('投稿需要先登录，正在跳转登录页…')
-    window.setTimeout(() => router.push('/adminpage'), 700)
+    showToast('投稿需要先登录，正在带你过去…')
+    window.setTimeout(() => router.push({ path: '/login', query: { redirect: '/studio' } }), 500)
     return
   }
   submitDone.value = false
   submitting.value = false
+  submitProgress.value = 0
   submitForm.title = defaultTitle()
   submitForm.description = defaultDescription()
   submitForm.categoryIds = []
@@ -1032,13 +1572,13 @@ function toggleCategory(id: string) {
 }
 
 /**
- * 逐步降级地造出上传文件：2x PNG → 1x PNG → 1x JPEG。
+ * 逐步降级地造出上传文件：导出倍率 PNG → 1x PNG → 1x JPEG。
  * 站内接口上限 10MB，照片类底图在 2x PNG 下有可能顶到上限，所以必须有兜底。
  */
 async function buildUploadFile(): Promise<File | null> {
   const { W, H } = fit.value
   const plan: Array<{ scale: number; type: string; quality?: number; ext: string }> = [
-    { scale: 2, type: 'image/png', ext: 'png' },
+    { scale: Math.max(1, Math.min(3, exportScale.value)), type: 'image/png', ext: 'png' },
     { scale: 1, type: 'image/png', ext: 'png' },
     { scale: 1, type: 'image/jpeg', quality: 0.9, ext: 'jpg' },
   ]
@@ -1046,7 +1586,7 @@ async function buildUploadFile(): Promise<File | null> {
     const canvas = renderToCanvas(spec.value, baseImg.value, W, H, p.scale)
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, p.type, p.quality))
     if (blob && blob.size <= 9.5 * 1024 * 1024) {
-      return new File([blob], `nailong-meme-${Date.now()}.${p.ext}`, { type: p.type })
+      return new File([blob], 'nailong-meme-' + Date.now() + '.' + p.ext, { type: p.type })
     }
   }
   return null
@@ -1056,14 +1596,15 @@ async function submitWork() {
   if (submitting.value) return
   const title = submitForm.title.trim()
   if (!title) {
-    showToast('先给这张图起个标题')
+    showToast('先给这张图起个标题', 'warning')
     return
   }
   submitting.value = true
+  submitProgress.value = 0
   try {
     const file = await buildUploadFile()
     if (!file) {
-      showToast('这张图太大了，把导出倍率调到 1x 再试')
+      showToast('这张图太大了，把导出倍率调到 1x 再试', 'warning')
       return
     }
     const fd = new FormData()
@@ -1072,12 +1613,16 @@ async function submitWork() {
     const desc = submitForm.description.trim()
     if (desc) fd.append('description', desc)
     if (submitForm.categoryIds.length) fd.append('categoryIds', JSON.stringify(submitForm.categoryIds))
-    await uploadImage(fd)
+    await uploadImage(fd, (percent) => {
+      submitProgress.value = percent
+    })
+    submitProgress.value = 100
     submitDone.value = true
-    showToast('已投稿！管理员审核通过后就会出现在站内')
+    saveWork()
+    showToast('投稿成功，等管理员审核通过就会出现在站内', 'success')
   } catch (err) {
     const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
-    showToast(msg || '投稿失败，稍后再试')
+    showToast(msg || '投稿失败，稍后再试', 'error')
   } finally {
     submitting.value = false
   }
@@ -1090,910 +1635,1947 @@ const filterState = computed(() => spec.value.filter)
 function setAspect(a: MemeAspect) {
   spec.value.aspect = a
 }
+
+function resetFilter() {
+  filterState.value.preset = 'none'
+  filterState.value.brightness = 1
+  filterState.value.contrast = 1
+  filterState.value.saturate = 1
+}
 </script>
 
 <template>
   <div class="studio">
-    <!-- 顶栏 -->
-    <header class="studio-head">
-      <div class="min-w-0">
-        <h1 class="studio-title">
-          <span class="studio-logo">🐉</span>
-          表情包工坊
-          <span class="studio-badge">BETA</span>
-        </h1>
-        <p class="studio-sub">
-          拖拽成图 · 三秒出片 · 全程在你的浏览器里完成，底图和成品都不会上传
-        </p>
-      </div>
-      <div class="studio-actions">
-        <button class="btn btn-ghost" title="随机底图 + 随机版式 + 随机文案" @click="randomize">🎲 给我灵感</button>
-        <button class="btn btn-ghost" @click="resetAll">↺ 重来</button>
-        <button class="btn btn-ghost" :disabled="busy" @click="copyToClipboard">⧉ 复制</button>
-        <button class="btn btn-ghost hidden sm:inline-flex" @click="share">↗ 分享</button>
-        <button class="btn btn-ghost" title="投稿到站内图库，管理员审核通过后公开" @click="openSubmit">📮 投稿到站内</button>
-        <button class="btn btn-primary" :disabled="busy" @click="download">⬇ 下载 PNG</button>
-      </div>
-    </header>
+    <div class="studio-bg" aria-hidden="true">
+      <span class="blob blob-butter" />
+      <span class="blob blob-accent" />
+      <span class="dot-field" />
+    </div>
 
-    <div class="studio-grid">
-      <!-- 左栏：底图与作品 -->
-      <aside
-        class="studio-rail studio-rail-left"
-        :class="pickerOpen ? 'rail-open' : ''"
-      >
-        <div class="rail-head lg:hidden">
-          <span class="rail-title">选底图</span>
-          <button class="btn btn-ghost btn-xs" @click="pickerOpen = false">✕ 关闭</button>
-        </div>
-
-        <div class="rail-section">
-          <div class="rail-title">底图来源</div>
-          <div class="flex gap-2">
-            <button class="btn btn-ghost flex-1" @click="fileInput?.click()">📁 本地图片</button>
-            <button class="btn btn-ghost flex-1" @click="randomFromGallery">🎲 随机一张</button>
+    <div class="n-container studio-shell">
+      <!-- 顶栏 -->
+      <header class="studio-head">
+        <div class="studio-intro">
+          <div class="studio-kicker">
+            <span class="eyebrow">04 / Meme Studio</span>
+            <span class="kicker-line" />
+            <span class="kicker-tag">BETA</span>
           </div>
-          <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="onFileChange" />
-          <p class="rail-note">
-            {{ baseMeta.label }}
-            <span v-if="baseMeta.w">· {{ baseMeta.w }}×{{ baseMeta.h }}</span>
+          <div class="studio-title-row">
+            <span class="studio-stamp" aria-hidden="true">表</span>
+            <h1 class="studio-title display">表情包工坊<span class="period">。</span></h1>
+          </div>
+          <p class="studio-lede">
+            挑一张站内图，写两行字，贴个纸片、换个滤镜。三秒出片，全程在浏览器里完成 ——
+            底图和成品都不会上传。
           </p>
-          <label class="rail-check">
-            <input v-model="useOriginal" type="checkbox" />
-            <span>站内图用原图（更清晰，费流量）</span>
-          </label>
+          <div class="studio-meta">
+            <span><AppIcon name="lock" :size="11" /> 不上传</span>
+            <span><AppIcon name="sparkles" :size="11" /> 免登录</span>
+            <span><AppIcon name="upload" :size="11" /> 可投稿</span>
+          </div>
         </div>
 
-        <div class="rail-section rail-grow">
-          <div class="rail-title-row">
-            <span class="rail-title">站内图库</span>
-            <div class="seg">
-              <button :class="['seg-btn', gallerySort === 'latest' ? 'seg-on' : '']" @click="gallerySort = 'latest'">最新</button>
-              <button :class="['seg-btn', gallerySort === 'popular' ? 'seg-on' : '']" @click="gallerySort = 'popular'">最热</button>
-              <button :class="['seg-btn', gallerySort === 'featured' ? 'seg-on' : '']" @click="gallerySort = 'featured'">精选</button>
+        <div class="studio-actions">
+          <div class="undo-group">
+            <button class="s-btn s-btn-icon" :disabled="!canUndo" title="撤销（Ctrl/⌘ Z）" aria-label="撤销" @click="undo">
+              <AppIcon name="undo" :size="16" />
+            </button>
+            <button class="s-btn s-btn-icon" :disabled="!canRedo" title="重做（Ctrl/⌘ Shift Z）" aria-label="重做" @click="redo">
+              <AppIcon name="redo" :size="16" />
+            </button>
+          </div>
+          <button class="s-btn s-btn-outline" @click="randomize">
+            <AppIcon name="dice" :size="15" /> 给我灵感
+          </button>
+          <button class="s-btn s-btn-ghost" @click="resetAll">
+            <AppIcon name="refresh" :size="15" /> 重来
+          </button>
+          <button class="s-btn s-btn-ghost optional-md" @click="copyToClipboard">
+            <AppIcon name="copy" :size="15" /> 复制
+          </button>
+          <button class="s-btn s-btn-ghost" @click="share">
+            <AppIcon name="share" :size="15" /> 分享
+          </button>
+          <button class="s-btn s-btn-outline" @click="openSubmit">
+            <AppIcon name="upload" :size="15" /> 投稿
+          </button>
+          <button class="s-btn s-btn-primary" :disabled="busy" @click="download">
+            <AppIcon name="download" :size="15" /> 下载 PNG
+          </button>
+          <button class="s-btn s-btn-icon s-btn-help" title="快捷键与小抄" aria-label="打开快捷键与小抄" @click="showHelp = true">
+            ?
+          </button>
+        </div>
+      </header>
+
+      <div class="workbench">
+        <!-- 左栏：底图与作品；移动端打开时 Teleport 到 body，避免被工作台的 stacking context 压住 -->
+        <Teleport to="body" :disabled="!pickerOpen || !drawerMode">
+        <aside
+          class="panel rail-left"
+          :class="{ 'is-open': pickerOpen }"
+          :role="pickerOpen ? 'dialog' : undefined"
+          :aria-modal="pickerOpen ? 'true' : undefined"
+          aria-label="素材台"
+        >
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">01 / Material</span>
+              <h2 class="panel-title display">素材台</h2>
             </div>
-          </div>
-          <div v-if="galleryLoading" class="rail-note">加载中…</div>
-          <div v-else-if="!gallery.length" class="rail-note">还没拉到图片，试试上传本地图片</div>
-          <div v-else class="gallery-grid">
-            <button
-              v-for="item in gallery"
-              :key="item.id"
-              class="gallery-cell"
-              :title="item.title"
-              @click="pickFromGallery(item)"
-            >
-              <img :src="thumbOf(item)" :alt="item.title" loading="lazy" />
-            </button>
-          </div>
-        </div>
-
-        <div class="rail-section">
-          <div class="rail-title-row">
-            <span class="rail-title">我的作品</span>
-            <span class="rail-note">只存在这台设备</span>
-          </div>
-          <div v-if="!works.length" class="rail-note">导出的图会自动收在这里，最多 9 张</div>
-          <div v-else class="gallery-grid">
-            <div v-for="w in works" :key="w.id" class="work-cell">
-              <img :src="w.thumb" alt="我的作品" @click="restoreWork(w)" />
-              <button class="work-del" title="删除" @click.stop="deleteWork(w.id)">✕</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="rail-section lg:hidden">
-          <button class="btn btn-primary w-full" @click="pickerOpen = false">就用这张，回工坊</button>
-        </div>
-      </aside>
-
-      <!-- 中间：舞台 -->
-      <section class="studio-stage">
-        <div class="stage-toolbar">
-          <div class="seg">
-            <button
-              v-for="a in ASPECTS"
-              :key="a.key"
-              :class="['seg-btn', spec.aspect === a.key ? 'seg-on' : '']"
-              :title="a.hint"
-              @click="setAspect(a.key)"
-            >
-              {{ a.label }}
-            </button>
-          </div>
-          <button class="btn btn-ghost btn-xs lg:hidden" @click="pickerOpen = true">🖼 换底图</button>
-          <div class="stage-hint hidden sm:block">{{ hint }}</div>
-        </div>
-
-        <div ref="stageRef" class="stage-box">
-          <canvas
-            ref="canvasRef"
-            class="stage-canvas"
-            @pointerdown="onPointerDown"
-            @pointermove="onPointerMove"
-            @pointerup="onPointerUp"
-            @pointercancel="onPointerUp"
-          />
-        </div>
-
-        <!-- 一键出片：配方是人工调好的成品，点一下就是一张可以直接发出去的图 -->
-        <div class="recipe-strip">
-          <span class="recipe-lead">一键出片</span>
-          <div class="recipe-scroll">
-            <button
-              v-for="r in MEME_RECIPES"
-              :key="r.id"
-              class="recipe-btn"
-              :title="r.desc"
-              @click="applyRecipe(r)"
-            >
-              <span class="recipe-emoji">{{ r.emoji }}</span>
-              <span class="recipe-name">{{ r.name }}</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="stage-foot">
-          <div class="stage-foot-left">
-            <span class="dot" /> 画布 {{ fit.W }}×{{ fit.H }} · 导出 {{ exportScale }}x
-            <span v-if="selected" class="sel-tag">
-              已选中：{{ selected.kind === 'text' ? (selectedText ? roleLabels[selectedText.role] : '文字') : '贴纸' }}
-            </span>
-          </div>
-          <div class="stage-foot-right">
-            <span class="rail-note">导出倍率</span>
-            <div class="seg">
-              <button v-for="s in [1, 2, 3]" :key="s" :class="['seg-btn', exportScale === s ? 'seg-on' : '']" @click="exportScale = s">{{ s }}x</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 右栏：控制台 -->
-      <aside class="studio-rail studio-rail-right">
-        <div class="rail-section">
-          <div class="rail-title">版式</div>
-          <div class="tpl-grid">
-            <button
-              v-for="t in TEMPLATES"
-              :key="t.key"
-              :class="['tpl-btn', spec.template === t.key ? 'tpl-on' : '']"
-              :title="t.desc"
-              @click="selectTemplate(t.key)"
-            >
-              <span class="tpl-emoji">{{ t.emoji }}</span>
-              <span class="tpl-name">{{ t.name }}</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="rail-section">
-          <div class="rail-title-row">
-            <span class="rail-title">文案</span>
-            <button class="btn btn-ghost btn-xs" @click="shuffleAllCopy">🎲 整段换一换</button>
-          </div>
-
-          <div class="mood-row">
-            <button :class="['chip', mood === 'all' ? 'chip-on' : '']" @click="mood = 'all'">全部</button>
-            <button
-              v-for="m in MOODS"
-              :key="m.key"
-              :class="['chip', mood === m.key ? 'chip-on' : '']"
-              @click="mood = m.key"
-            >
-              {{ m.emoji }} {{ m.label }}
+            <button class="s-btn s-btn-icon rail-close-btn" aria-label="关闭素材台" @click="pickerOpen = false">
+              <AppIcon name="close" :size="16" />
             </button>
           </div>
 
-          <div v-for="row in copyRows" :key="row.role" class="copy-row">
-            <div class="copy-head">
-              <span class="copy-label">{{ row.label }}</span>
-              <button class="btn btn-ghost btn-xs" @click="fillCopy(row.role)">🎲 换一条</button>
-            </div>
-            <textarea
-              v-model="row.block.content"
-              class="copy-input"
-              rows="2"
-              maxlength="60"
-              :placeholder="row.role === 'free' ? '想说什么？' : '一句话就好'"
-            />
-          </div>
-        </div>
-
-        <div v-if="focusedTexts.length || focusedStickers.length" class="rail-section rail-focus">
-          <div class="rail-title-row">
-            <span class="rail-title">选中项</span>
-            <button class="btn btn-ghost btn-xs" @click="selected = null">取消选中</button>
-          </div>
-
-          <template v-for="t in focusedTexts" :key="t.id">
-            <div class="ctl-row">
-              <span class="ctl-label">字号</span>
-              <input v-model.number="t.size" class="range" type="range" min="30" max="220" step="2" />
-              <span class="ctl-val">{{ t.size }}</span>
-            </div>
-            <div class="ctl-row">
-              <span class="ctl-label">旋转</span>
-              <input v-model.number="t.rotation" class="range" type="range" min="-30" max="30" step="1" />
-              <span class="ctl-val">{{ t.rotation }}°</span>
-            </div>
-            <div class="ctl-row">
-              <span class="ctl-label">颜色</span>
-              <div class="swatches">
-                <button
-                  v-for="c in SWATCHES"
-                  :key="c"
-                  class="swatch"
-                  :class="t.color === c ? 'swatch-on' : ''"
-                  :style="{ background: c }"
-                  @click="t.color = c"
-                />
+          <div class="panel-body">
+            <section class="rail-block">
+              <div class="block-head">
+                <span class="block-label">底图</span>
+                <span class="block-count">{{ baseMeta.w ? baseMeta.w + '×' + baseMeta.h : '' }}</span>
               </div>
-            </div>
-            <div class="ctl-row">
-              <span class="ctl-label">字体</span>
-              <div class="mood-row">
+
+              <div class="base-card">
+                <div class="base-thumb">
+                  <img v-if="basePreview" :src="basePreview" alt="" />
+                  <AppIcon v-else name="image" :size="20" />
+                </div>
+                <div class="base-info">
+                  <p class="base-name">{{ baseMeta.label }}</p>
+                  <p class="base-dim">
+                    {{ baseMeta.w ? baseMeta.w + ' × ' + baseMeta.h + ' px' : baseMeta.origin === 'none' ? '还没选底图' : '正在读图…' }}
+                  </p>
+                </div>
+              </div>
+
+              <div class="rail-btn-row">
+                <button class="s-btn s-btn-outline s-btn-sm" @click="fileInput?.click()">
+                  <AppIcon name="folder" :size="14" /> 本地图片
+                </button>
+                <button class="s-btn s-btn-outline s-btn-sm" @click="randomFromGallery()">
+                  <AppIcon name="dice" :size="14" /> 随机一张
+                </button>
+              </div>
+              <input ref="fileInput" class="sr-only" type="file" accept="image/*" @change="onFileChange" />
+
+              <div
+                class="check-row"
+                :class="{ 'is-disabled': baseMeta.origin !== 'site' || !lastPicked }"
+              >
                 <button
-                  v-for="f in FONT_KEYS"
-                  :key="f"
-                  :class="['chip', (t.font ?? 'bold') === f ? 'chip-on' : '']"
-                  :title="FONT_STACKS[f].label"
-                  :style="{ fontFamily: FONT_STACKS[f].family }"
-                  @click="t.font = f"
+                  type="button"
+                  role="checkbox"
+                  :aria-checked="useOriginal"
+                  :disabled="baseMeta.origin !== 'site' || !lastPicked"
+                  class="check-box"
+                  :class="{ 'is-on': useOriginal }"
+                  @click="useOriginal = !useOriginal"
                 >
-                  {{ FONT_STACKS[f].label }}
+                  <AppIcon v-if="useOriginal" name="check" :size="10" :stroke-width="2.6" />
+                </button>
+                <span @click="baseMeta.origin === 'site' && lastPicked && (useOriginal = !useOriginal)">
+                  站内图用原图 <span class="muted-text">（更清晰，费流量）</span>
+                </span>
+              </div>
+            </section>
+
+            <section class="rail-block grow">
+              <div class="block-head">
+                <span class="block-label">站内图库</span>
+                <span class="block-count">{{ galleryTotal ? '共 ' + galleryTotal + ' 张' : '' }}</span>
+              </div>
+
+              <div class="gallery-search">
+                <AppIcon name="search" :size="14" />
+                <input v-model="gallerySearch" type="search" placeholder="搜标题或标签…" aria-label="搜索站内图库" />
+                <button v-if="gallerySearch" class="search-clear" aria-label="清空搜索" @click="gallerySearch = ''">
+                  <AppIcon name="close" :size="12" />
+                </button>
+              </div>
+
+              <div class="seg seg-compact">
+                <button
+                  v-for="s in GALLERY_SORTS"
+                  :key="s.key"
+                  class="seg-btn"
+                  :class="{ 'is-on': gallerySort === s.key }"
+                  :aria-pressed="gallerySort === s.key"
+                  :disabled="s.key === 'featured' && !!gallerySearch.trim()"
+                  :title="s.key === 'featured' && gallerySearch.trim() ? '搜索时按最新排序' : ''"
+                  @click="gallerySort = s.key"
+                >
+                  {{ s.label }}
+                </button>
+              </div>
+
+              <div v-if="galleryLoading" class="gallery-scroll">
+                <div class="gallery-grid" aria-label="图库加载中">
+                  <span v-for="n in 9" :key="n" class="gallery-cell skeleton" />
+                </div>
+              </div>
+              <div v-else-if="galleryError" class="empty-note">
+                <p>图库没拉到，可能是网络打了个喷嚏。</p>
+                <button class="s-btn s-btn-outline s-btn-sm" @click="loadGallery(true)">重试</button>
+              </div>
+              <div v-else-if="!gallery.length" class="empty-note">
+                <p>{{ gallerySearch ? '没有搜到图，换个词试试。' : '图库还空着，试试上传本地图片。' }}</p>
+                <button class="s-btn s-btn-outline s-btn-sm" @click="gallerySearch = ''; gallerySort = 'latest'">看全部</button>
+              </div>
+              <div v-else class="gallery-scroll">
+                <div class="gallery-grid">
+                  <button
+                    v-for="item in gallery"
+                    :key="item.id"
+                    class="gallery-cell"
+                    :class="{ 'is-active': activeBaseId === item.id }"
+                    :title="item.title"
+                    @click="pickFromGallery(item)"
+                  >
+                    <img :src="thumbOf(item)" :alt="item.title" loading="lazy" />
+                    <span v-if="activeBaseId === item.id" class="cell-check">
+                      <AppIcon name="check" :size="10" :stroke-width="3" />
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <button
+                v-if="galleryHasMore"
+                class="s-btn s-btn-ghost s-btn-sm gallery-more"
+                :disabled="galleryMoreLoading"
+                @click="loadNextGalleryPage"
+              >
+                <span>{{ galleryMoreLoading ? '加载中…' : '再看一些' }}</span>
+                <AppIcon v-if="!galleryMoreLoading" name="arrow-down" :size="13" />
+              </button>
+            </section>
+
+            <section class="rail-block">
+              <div class="block-head">
+                <span class="block-label">我的作品</span>
+                <span class="block-count">{{ works.length }}/9</span>
+              </div>
+              <p v-if="!works.length" class="empty-note-sm">导出的图会自动收在这里，只存在这台设备。</p>
+              <div v-else class="works-grid">
+                <div v-for="w in works" :key="w.id" class="work-cell" :title="'载入 ' + formatWorkDate(w.createdAt) + ' 的作品'">
+                  <img :src="w.thumb" alt="我的作品" @click="restoreWork(w)" />
+                  <button class="work-del" title="删除" aria-label="删除作品" @click.stop="deleteWork(w.id)">
+                    <AppIcon name="close" :size="10" />
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="rail-mobile-foot">
+            <button class="s-btn s-btn-primary s-btn-block" @click="pickerOpen = false">回到画布</button>
+          </div>
+        </aside>
+
+        <Transition name="fade">
+          <div v-if="pickerOpen" class="drawer-backdrop" aria-hidden="true" @click="pickerOpen = false" />
+        </Transition>
+        </Teleport>
+
+        <!-- 中间：舞台 -->
+        <section class="stage-panel" aria-label="画布与出片">
+          <div class="stage-toolbar">
+            <div class="seg aspect-seg">
+              <button
+                v-for="a in ASPECTS"
+                :key="a.key"
+                class="seg-btn"
+                :class="{ 'is-on': spec.aspect === a.key }"
+                :title="a.hint"
+                :aria-pressed="spec.aspect === a.key"
+                @click="setAspect(a.key)"
+              >
+                {{ a.label }}
+              </button>
+            </div>
+            <button class="s-btn s-btn-outline s-btn-sm rail-open-btn" @click="pickerOpen = true">
+              <AppIcon name="image" :size="14" /> 素材
+            </button>
+            <span class="stage-hint">{{ hint }}</span>
+          </div>
+
+          <div
+            ref="stageRef"
+            class="stage-mat"
+            :class="{ 'is-drop': dragOver }"
+            @dragover="onDragOver"
+            @dragleave="onDragLeave"
+            @drop="onDrop"
+          >
+            <span class="stage-tape stage-tape-l" aria-hidden="true" />
+            <span class="stage-tape stage-tape-r" aria-hidden="true" />
+            <canvas
+              ref="canvasRef"
+              class="stage-canvas"
+              aria-label="表情包画布，点选文字或贴纸后可以拖动"
+              @pointerdown="onPointerDown"
+              @pointermove="onPointerMove"
+              @pointerup="onPointerUp"
+              @pointercancel="onPointerUp"
+              @wheel="onCanvasWheel"
+            />
+            <div v-if="dragOver" class="drop-overlay">
+              <AppIcon name="image" :size="26" />
+              <span>松手，就换成这张底图</span>
+            </div>
+          </div>
+
+          <!-- 一键出片：配方是人工调好的成品，点一下就是一张可以直接发出去的图 -->
+          <div class="recipe-strip">
+            <div class="recipe-lead">
+              <span class="eyebrow">一键出片</span>
+              <span class="recipe-lead-note">调好的配方</span>
+            </div>
+            <div class="recipe-scroll">
+              <button v-for="r in MEME_RECIPES" :key="r.id" class="recipe-btn" :title="r.desc" @click="applyRecipe(r)">
+                <span>{{ r.emoji }}</span>
+                <span>{{ r.name }}</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="stage-foot">
+            <div v-if="selected" class="quick-bar" role="toolbar" aria-label="选中项快捷操作">
+              <span class="quick-label">{{ selectedLabel }}</span>
+              <button class="q-btn" title="缩小（[）" @click="bumpSize(-6)">A−</button>
+              <button class="q-btn" title="放大（]）" @click="bumpSize(6)">A＋</button>
+              <button v-if="selected.kind === 'text'" class="q-btn" @click="resetPosition">复位</button>
+              <button v-if="selected.kind === 'sticker'" class="q-btn" @click="duplicateSticker(selected.id)">复制</button>
+              <button v-if="selected.kind === 'sticker'" class="q-btn q-danger" @click="removeSticker(selected.id)">删除</button>
+              <button class="q-btn q-done" @click="selected = null">完成</button>
+            </div>
+            <div v-else class="stage-foot-left">
+              <span class="status-dot" />
+              <span>{{ fit.W }} × {{ fit.H }} · 导出 {{ exportScale }}x</span>
+              <span class="foot-sep">/</span>
+              <span class="draft-state"><AppIcon name="save" :size="11" /> {{ draftStatus }}</span>
+            </div>
+            <div class="stage-foot-right">
+              <span class="foot-label">导出倍率</span>
+              <div class="seg seg-tiny">
+                <button
+                  v-for="s in [1, 2, 3]"
+                  :key="s"
+                  class="seg-btn"
+                  :class="{ 'is-on': exportScale === s }"
+                  @click="exportScale = s"
+                >
+                  {{ s }}x
                 </button>
               </div>
             </div>
-            <div class="ctl-row">
-              <span class="ctl-label">描边</span>
-              <button :class="['toggle', t.stroke ? 'toggle-on' : '']" @click="t.stroke = !t.stroke">
-                {{ t.stroke ? '经典黑边' : '无描边' }}
-              </button>
-              <div v-if="t.stroke" class="swatches">
-                <button
-                  v-for="c in STROKE_COLORS"
-                  :key="c"
-                  class="swatch swatch-stroke"
-                  :class="(t.strokeColor || STROKE_COLORS[0]) === c ? 'swatch-on' : ''"
-                  :style="{ background: c }"
-                  :title="c"
-                  @click="t.strokeColor = c"
-                />
-              </div>
-              <button class="btn btn-ghost btn-xs" @click="resetPosition">复位位置</button>
-            </div>
-          </template>
-
-          <template v-for="s in focusedStickers" :key="s.id">
-            <div class="ctl-row">
-              <span class="ctl-label">大小</span>
-              <input v-model.number="s.size" class="range" type="range" min="40" max="420" step="4" />
-              <span class="ctl-val">{{ s.size }}</span>
-            </div>
-            <div class="ctl-row">
-              <span class="ctl-label">旋转</span>
-              <input v-model.number="s.rotation" class="range" type="range" min="-180" max="180" step="1" />
-              <span class="ctl-val">{{ s.rotation }}°</span>
-            </div>
-            <div class="ctl-row">
-              <button class="btn btn-danger btn-xs" @click="removeSticker(s.id)">🗑 删掉这个贴纸</button>
-            </div>
-          </template>
-        </div>
-
-        <div class="rail-section">
-          <div class="rail-title">贴纸</div>
-          <div v-for="g in STICKER_GROUPS" :key="g.label" class="sticker-group">
-            <span class="sticker-label">{{ g.label }}</span>
-            <div class="sticker-row">
-              <button v-for="e in g.items" :key="e" class="sticker-btn" @click="addSticker(e)">{{ e }}</button>
-            </div>
           </div>
-        </div>
+        </section>
 
-        <div class="rail-section">
-          <div class="rail-title-row">
-            <span class="rail-title">滤镜</span>
-            <button class="btn btn-ghost btn-xs" @click="filterState.preset = 'none'; filterState.brightness = 1; filterState.contrast = 1; filterState.saturate = 1">重置</button>
-          </div>
-          <div class="mood-row">
-            <button
-              v-for="p in FILTER_PRESETS"
-              :key="p.key"
-              :class="['chip', filterState.preset === p.key ? 'chip-on' : '']"
-              @click="filterState.preset = p.key"
-            >
-              {{ p.label }}
+        <!-- 右栏：控制台 -->
+        <aside class="panel rail-right">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">02 / Controls</span>
+              <h2 class="panel-title display">控制台</h2>
+            </div>
+            <button class="s-btn s-btn-icon s-btn-help" title="快捷键与小抄" aria-label="打开快捷键与小抄" @click="showHelp = true">
+              ?
             </button>
           </div>
-          <div class="ctl-row">
-            <span class="ctl-label">亮度</span>
-            <input v-model.number="filterState.brightness" class="range" type="range" min="0.6" max="1.5" step="0.01" />
-            <span class="ctl-val">{{ filterState.brightness.toFixed(2) }}</span>
-          </div>
-          <div class="ctl-row">
-            <span class="ctl-label">对比</span>
-            <input v-model.number="filterState.contrast" class="range" type="range" min="0.6" max="1.6" step="0.01" />
-            <span class="ctl-val">{{ filterState.contrast.toFixed(2) }}</span>
-          </div>
-          <div class="ctl-row">
-            <span class="ctl-label">饱和</span>
-            <input v-model.number="filterState.saturate" class="range" type="range" min="0" max="2" step="0.01" />
-            <span class="ctl-val">{{ filterState.saturate.toFixed(2) }}</span>
-          </div>
-        </div>
 
-        <div class="rail-section rail-tips">
-          <div class="rail-title">小抄</div>
-          <ul class="tips">
-            <li>直接<b>拖</b>画布上的文字和贴纸</li>
-            <li>点一下就能选中，右侧出现细调面板</li>
-            <li><kbd>1</kbd>~<kbd>7</kbd> 换版式，<kbd>Ctrl</kbd>+<kbd>S</kbd> 下载，<kbd>Ctrl</kbd>+<kbd>D</kbd> 灵感</li>
-            <li>选中后<b>方向键</b>微调（按住 <kbd>Shift</kbd> 走大步）</li>
-            <li><kbd>Esc</kbd> 取消选中，<kbd>Delete</kbd> 删贴纸</li>
-            <li>版式换来换去，写好的字不会丢；刷新也能接着改</li>
-          </ul>
-        </div>
-      </aside>
-    </div>
-
-    <Transition name="toast">
-      <div v-if="toast" class="studio-toast">{{ toast }}</div>
-    </Transition>
-
-    <!-- 投稿弹窗：不引 Element Plus（工坊是一块独立的暗色工作台），所以自己画一个 -->
-    <Transition name="toast">
-      <div v-if="showSubmit" class="submit-mask" @click.self="showSubmit = false">
-        <div class="submit-panel" role="dialog" aria-modal="true" aria-label="投稿到站内">
-          <div class="submit-head">
-            <span class="submit-title">📮 投稿到站内图库</span>
-            <button class="btn btn-ghost btn-xs" @click="showSubmit = false">✕</button>
-          </div>
-
-          <template v-if="!submitDone">
-            <div class="submit-body">
-              <img v-if="submitPreview" :src="submitPreview" class="submit-preview" alt="投稿预览" />
-              <div class="submit-fields">
-                <label class="submit-label">标题</label>
-                <input v-model="submitForm.title" class="copy-input" maxlength="255" placeholder="给这张图起个名字" />
-
-                <label class="submit-label">描述</label>
-                <textarea
-                  v-model="submitForm.description"
-                  class="copy-input"
-                  rows="3"
-                  maxlength="500"
-                  placeholder="说明一下这张图（可留空）"
-                />
-
-                <label class="submit-label">分类<span class="submit-hint">（可多选，也可以不选）</span></label>
-                <div v-if="categories.length" class="mood-row">
-                  <button
-                    v-for="c in categories"
-                    :key="c.id"
-                    :class="['chip', submitForm.categoryIds.includes(c.id) ? 'chip-on' : '']"
-                    @click="toggleCategory(c.id)"
-                  >
-                    {{ c.name }}
-                  </button>
-                </div>
-                <p v-else class="rail-note">分类加载中…</p>
-
-                <p class="submit-note">
-                  投稿会进入站内的<b>审核队列</b>（状态为待审核），管理员通过后才对所有人可见。
-                  图片会以 {{ exportScale }}x 分辨率提交。
-                </p>
+          <div v-if="selected" class="selection-card rail-focus">
+            <div class="selection-head">
+              <div>
+                <span class="eyebrow">Selected</span>
+                <p class="selection-title">{{ selectedLabel }}</p>
               </div>
-            </div>
-            <div class="submit-foot">
-              <button class="btn btn-ghost" @click="showSubmit = false">先不投</button>
-              <button class="btn btn-primary" :disabled="submitting" @click="submitWork">
-                {{ submitting ? '投稿中…' : '确认投稿' }}
+              <button class="icon-mini" aria-label="取消选中" @click="selected = null">
+                <AppIcon name="close" :size="14" />
               </button>
             </div>
-          </template>
 
-          <template v-else>
-            <div class="submit-body submit-done">
-              <div class="submit-done-emoji">🎉</div>
-              <p class="submit-done-text">
-                投稿成功，已经在审核队列里了。<br />
-                管理员通过后，它就会出现在站内图库里。
-              </p>
-              <div class="submit-foot">
-                <button class="btn btn-ghost" @click="showSubmit = false">继续做图</button>
-                <button class="btn btn-primary" @click="router.push('/profile')">去我的主页看看</button>
+            <template v-for="t in focusedTexts" :key="t.id">
+              <div class="field">
+                <div class="field-head">
+                  <span class="field-label">文案</span>
+                  <span class="field-val">{{ t.content.length }}/60</span>
+                </div>
+                <textarea v-model="t.content" class="selection-input" rows="2" maxlength="60" placeholder="改这一句…" />
               </div>
-            </div>
-          </template>
-        </div>
-      </div>
-    </Transition>
+              <div class="field">
+                <div class="field-head">
+                  <span class="field-label">字号</span>
+                  <span class="field-val">{{ t.size }}</span>
+                </div>
+                <input v-model.number="t.size" class="range" type="range" min="30" max="220" step="2" aria-label="文字字号" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <span class="field-label">旋转</span>
+                  <span class="field-val">{{ t.rotation }}°</span>
+                </div>
+                <input v-model.number="t.rotation" class="range" type="range" min="-30" max="30" step="1" aria-label="文字旋转" />
+              </div>
+              <div class="field">
+                <div class="field-head"><span class="field-label">颜色</span></div>
+                <div class="swatches">
+                  <button
+                    v-for="c in SWATCHES"
+                    :key="c"
+                    class="swatch"
+                    :class="{ 'is-on': t.color.toLowerCase() === c.toLowerCase() }"
+                    :style="{ background: c }"
+                    :aria-label="'文字颜色 ' + c"
+                    :aria-pressed="t.color.toLowerCase() === c.toLowerCase()"
+                    @click="t.color = c"
+                  />
+                  <label class="color-pick" title="自定义颜色">
+                    <input type="color" :value="t.color" aria-label="自定义文字颜色" @input="onTextColor($event, t)" />
+                    <AppIcon name="palette" :size="13" />
+                  </label>
+                </div>
+              </div>
+              <div class="field">
+                <div class="field-head"><span class="field-label">字体</span></div>
+                <div class="font-grid">
+                  <button
+                    v-for="f in FONT_KEYS"
+                    :key="f"
+                    class="chip font-chip"
+                    :class="{ 'is-on': (t.font ?? 'bold') === f }"
+                    :style="{ fontFamily: FONT_STACKS[f].family, fontWeight: FONT_STACKS[f].weight }"
+                    :aria-pressed="(t.font ?? 'bold') === f"
+                    @click="t.font = f"
+                  >
+                    {{ FONT_STACKS[f].label }}
+                  </button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="field-head"><span class="field-label">对齐</span></div>
+                <div class="seg seg-tiny align-seg">
+                  <button
+                    v-for="a in ALIGNS"
+                    :key="a.key"
+                    class="seg-btn"
+                    :class="{ 'is-on': t.align === a.key }"
+                    :aria-pressed="t.align === a.key"
+                    @click="t.align = a.key"
+                  >
+                    {{ a.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <span class="field-label">描边</span>
+                  <button class="toggle" :class="{ 'is-on': t.stroke }" :aria-pressed="t.stroke" @click="t.stroke = !t.stroke">
+                    {{ t.stroke ? '经典黑边' : '无描边' }}
+                  </button>
+                </div>
+                <div v-if="t.stroke" class="swatches">
+                  <button
+                    v-for="c in STROKE_COLORS"
+                    :key="c"
+                    class="swatch"
+                    :class="{ 'is-on': (t.strokeColor || STROKE_COLORS[0]) === c }"
+                    :style="{ background: c }"
+                    :aria-label="'描边颜色 ' + c"
+                    :aria-pressed="(t.strokeColor || STROKE_COLORS[0]) === c"
+                    @click="t.strokeColor = c"
+                  />
+                  <label class="color-pick" title="自定义描边色">
+                    <input type="color" :value="t.strokeColor || STROKE_COLORS[0]" aria-label="自定义描边颜色" @input="onStrokeColor($event, t)" />
+                    <AppIcon name="palette" :size="13" />
+                  </label>
+                </div>
+              </div>
+              <div class="selection-actions">
+                <button class="s-btn s-btn-outline s-btn-xs" @click="resetPosition">复位位置</button>
+                <button class="s-btn s-btn-ghost s-btn-xs" @click="t.content = ''">清空文字</button>
+              </div>
+            </template>
 
-    <!-- 灵感墙：8 个配方 × 站内图，由引擎当场画出来 -->
-    <section class="wall">
-      <div class="wall-head">
-        <h2 class="wall-title">看看能做出什么</h2>
-        <p class="wall-sub">
-          下面每一张都是这个工坊<strong>实时</strong>画出来的（配方 × 站内图库的图）。
-          看中哪张就点一下 —— 它会整个换到你的画布上，改两个字就是你的了。
-        </p>
+            <template v-for="s in focusedStickers" :key="s.id">
+              <div class="field">
+                <div class="field-head">
+                  <span class="field-label">大小</span>
+                  <span class="field-val">{{ s.size }}</span>
+                </div>
+                <input v-model.number="s.size" class="range" type="range" min="40" max="420" step="4" aria-label="贴纸大小" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <span class="field-label">旋转</span>
+                  <span class="field-val">{{ s.rotation }}°</span>
+                </div>
+                <input v-model.number="s.rotation" class="range" type="range" min="-180" max="180" step="1" aria-label="贴纸旋转" />
+              </div>
+              <div class="selection-actions">
+                <button class="s-btn s-btn-outline s-btn-xs" @click="duplicateSticker(s.id)">复制一个</button>
+                <button class="s-btn s-btn-danger s-btn-xs" @click="removeSticker(s.id)">删掉</button>
+              </div>
+            </template>
+          </div>
+
+          <div class="tabs" role="tablist" aria-label="工坊控制">
+            <button
+              v-for="tab in PANEL_TABS"
+              :key="tab.key"
+              class="tab"
+              :class="{ 'is-active': panelTab === tab.key }"
+              role="tab"
+              :aria-selected="panelTab === tab.key"
+              @click="panelTab = tab.key"
+            >
+              <AppIcon :name="tab.icon" :size="15" />
+              <span>{{ tab.label }}</span>
+            </button>
+          </div>
+
+          <div class="panel-body tab-body">
+            <section v-if="panelTab === 'layout'" class="tab-pane" role="tabpanel">
+              <div class="block-head">
+                <span class="block-label">版式</span>
+                <span class="block-count">{{ TEMPLATES.length }} 套</span>
+              </div>
+              <div class="tpl-grid">
+                <button
+                  v-for="t in TEMPLATES"
+                  :key="t.key"
+                  class="tpl-btn"
+                  :class="{ 'is-on': spec.template === t.key }"
+                  :title="t.desc"
+                  @click="selectTemplate(t.key)"
+                >
+                  <span class="tpl-emoji">{{ t.emoji }}</span>
+                  <span class="tpl-name">{{ t.name }}</span>
+                </button>
+              </div>
+              <div class="hint-card">换版式不会丢掉已经写好的字；按 <kbd>1</kbd>~<kbd>7</kbd> 也能直接切。</div>
+            </section>
+
+            <section v-else-if="panelTab === 'copy'" class="tab-pane" role="tabpanel">
+              <div class="block-head">
+                <span class="block-label">文案</span>
+                <button class="s-btn s-btn-ghost s-btn-xs" @click="shuffleAllCopy">
+                  <AppIcon name="dice" :size="13" /> 整段换一换
+                </button>
+              </div>
+              <div class="mood-row">
+                <button class="chip" :class="{ 'is-on': mood === 'all' }" @click="mood = 'all'">全部</button>
+                <button
+                  v-for="m in MOODS"
+                  :key="m.key"
+                  class="chip"
+                  :class="{ 'is-on': mood === m.key }"
+                  @click="mood = m.key"
+                >
+                  {{ m.emoji }} {{ m.label }}
+                </button>
+              </div>
+              <div v-for="row in copyRows" :key="row.role" class="copy-row">
+                <div class="copy-head">
+                  <span class="copy-label">{{ row.label }}</span>
+                  <button class="s-btn s-btn-ghost s-btn-xs" @click="fillCopy(row.role)">
+                    <AppIcon name="dice" :size="12" /> 换一条
+                  </button>
+                </div>
+                <textarea
+                  v-model="row.block.content"
+                  class="copy-input"
+                  rows="2"
+                  maxlength="60"
+                  :placeholder="row.role === 'free' ? '想说什么？' : '一句话就好'"
+                />
+                <span class="counter">{{ row.block.content.length }}/60</span>
+              </div>
+              <div class="hint-card">上句抛梗，下句接住；字越少，越像真的。</div>
+            </section>
+
+            <section v-else-if="panelTab === 'sticker'" class="tab-pane" role="tabpanel">
+              <div class="block-head">
+                <span class="block-label">贴纸</span>
+                <span class="block-count">{{ ALL_STICKERS.length }} 个</span>
+              </div>
+              <div v-for="g in STICKER_GROUPS" :key="g.label" class="sticker-group">
+                <span class="sticker-label">{{ g.label }}</span>
+                <div class="sticker-row">
+                  <button
+                    v-for="e in g.items"
+                    :key="e"
+                    class="sticker-btn"
+                    :aria-label="'添加贴纸 ' + e"
+                    @click="addSticker(e)"
+                  >
+                    {{ e }}
+                  </button>
+                </div>
+              </div>
+              <div class="hint-card">选中贴纸后，滚轮可以缩放；方向键微调，<kbd>Delete</kbd> 删掉。</div>
+            </section>
+
+            <section v-else class="tab-pane" role="tabpanel">
+              <div class="block-head">
+                <span class="block-label">滤镜</span>
+                <button class="s-btn s-btn-ghost s-btn-xs" @click="resetFilter">重置</button>
+              </div>
+              <div class="mood-row">
+                <button
+                  v-for="p in FILTER_PRESETS"
+                  :key="p.key"
+                  class="chip"
+                  :class="{ 'is-on': filterState.preset === p.key }"
+                  @click="filterState.preset = p.key"
+                >
+                  {{ p.label }}
+                </button>
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <span class="field-label">亮度</span>
+                  <span class="field-val">{{ filterState.brightness.toFixed(2) }}</span>
+                </div>
+                <input v-model.number="filterState.brightness" class="range" type="range" min="0.6" max="1.5" step="0.01" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <span class="field-label">对比</span>
+                  <span class="field-val">{{ filterState.contrast.toFixed(2) }}</span>
+                </div>
+                <input v-model.number="filterState.contrast" class="range" type="range" min="0.6" max="1.6" step="0.01" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <span class="field-label">饱和</span>
+                  <span class="field-val">{{ filterState.saturate.toFixed(2) }}</span>
+                </div>
+                <input v-model.number="filterState.saturate" class="range" type="range" min="0" max="2" step="0.01" />
+              </div>
+              <div class="hint-card">「胶片」和「暖调」最配奶龙；黑白适合做金句卡。</div>
+            </section>
+          </div>
+        </aside>
       </div>
-      <div v-if="!wallItems.length" class="wall-empty">图库加载完就会出现（如果一直空着，检查一下网络）</div>
-      <div v-else class="wall-grid">
-        <button
-          v-for="item in wallItems"
-          :key="item.key"
-          class="wall-card"
-          :title="`${item.recipe.name}：${item.recipe.desc}`"
-          @click="applyWall(item)"
-        >
-          <span class="wall-canvas-wrap">
-            <canvas :ref="(el: unknown) => setWallCanvas(el, item.key)" class="wall-canvas" />
-          </span>
-          <span class="wall-meta">
-            <span class="wall-name">{{ item.recipe.emoji }} {{ item.recipe.name }}</span>
-            <span class="wall-from">底图：{{ item.image.title }}</span>
-          </span>
-        </button>
+
+      <!-- 灵感墙：8 个配方 × 站内图，由引擎当场画出来 -->
+      <section class="wall" aria-labelledby="wall-title">
+        <div class="wall-head">
+          <div>
+            <p class="eyebrow">03 / Recipes</p>
+            <h2 id="wall-title" class="wall-title display">看看能做出什么<span class="period">。</span></h2>
+          </div>
+          <p class="wall-sub">
+            下面每一张都是工坊<strong>实时</strong>画出来的：配方 × 站内图库。看中哪张就点一下 ——
+            它会整个换到你的画布上，改两个字就是你的了。
+          </p>
+        </div>
+        <div v-if="!wallItems.length" class="wall-empty">图库加载完就会出现（如果一直空着，检查一下网络）。</div>
+        <div v-else class="wall-grid">
+          <button
+            v-for="(item, i) in wallItems"
+            :key="item.key"
+            class="wall-card"
+            :title="item.recipe.name + '：' + item.recipe.desc"
+            @click="applyWall(item)"
+          >
+            <span class="wall-num">{{ String(i + 1).padStart(2, '0') }}</span>
+            <span class="wall-canvas-wrap">
+              <canvas :ref="(el: unknown) => setWallCanvas(el, item.key)" class="wall-canvas" />
+            </span>
+            <span class="wall-meta">
+              <span class="wall-name">{{ item.recipe.emoji }} {{ item.recipe.name }}</span>
+              <span class="wall-from">底图 · {{ item.image.title }}</span>
+            </span>
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <!-- 小抄 -->
+    <UiModal v-model="showHelp" title="工坊小抄" width="780px">
+      <template #subtitle>
+        <p class="eyebrow">Keyboard & tips</p>
+      </template>
+      <div class="help-grid">
+        <section>
+          <h3 class="help-title">快捷键</h3>
+          <ul class="help-list">
+            <li><span>撤销 / 重做</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Shift</kbd>+<kbd>Ctrl</kbd>+<kbd>Z</kbd></span></li>
+            <li><span>下载 PNG</span><span><kbd>Ctrl</kbd>+<kbd>S</kbd></span></li>
+            <li><span>一键灵感</span><span><kbd>Ctrl</kbd>+<kbd>D</kbd></span></li>
+            <li><span>切换版式</span><span><kbd>1</kbd> ~ <kbd>7</kbd></span></li>
+            <li><span>微调选中项</span><span><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> / <kbd>Shift</kbd> 大步</span></li>
+            <li><span>字号 - / +</span><span><kbd>[</kbd> / <kbd>]</kbd></span></li>
+            <li><span>取消选中</span><span><kbd>Esc</kbd></span></li>
+            <li><span>删除贴纸</span><span><kbd>Delete</kbd></span></li>
+            <li><span>打开小抄</span><span><kbd>?</kbd></span></li>
+          </ul>
+        </section>
+        <section>
+          <h3 class="help-title">小技巧</h3>
+          <ul class="tip-list">
+            <li>直接<b>拖</b>画布上的文字和贴纸；点一下就能选中。</li>
+            <li>选中贴纸后，鼠标<b>滚轮</b>可以缩放。</li>
+            <li>站内图库可以用标题或标签<b>搜索</b>，也能继续加载更多。</li>
+            <li>本地图片可以直接<b>拖进画布</b>，不会上传到服务器。</li>
+            <li>大图会自动缩到 2000px 以内再进画布，导出仍然清晰。</li>
+            <li>版式换来换去，写好的字不会丢；刷新也能接着改。</li>
+            <li>草稿存在这台设备上；导出、复制、分享都会收进「我的作品」。</li>
+          </ul>
+        </section>
       </div>
-    </section>
+      <div class="help-foot">
+        <button class="s-btn s-btn-primary" @click="showHelp = false">知道了</button>
+      </div>
+    </UiModal>
+
+    <!-- 投稿弹窗 -->
+    <UiModal v-model="showSubmit" title="投稿到站内图库" width="900px" :closable="!submitting">
+      <template #subtitle>
+        <p class="eyebrow">经审核后公开</p>
+      </template>
+
+      <template v-if="!submitDone">
+        <div class="submit-grid">
+          <div class="submit-preview-wrap">
+            <img v-if="submitPreview" :src="submitPreview" class="submit-preview" alt="投稿预览" />
+          </div>
+          <div class="submit-fields">
+            <label class="field-label" for="submit-title">标题</label>
+            <input id="submit-title" v-model="submitForm.title" class="s-input" maxlength="255" placeholder="给这张图起个名字" />
+
+            <label class="field-label" for="submit-desc">描述</label>
+            <textarea
+              id="submit-desc"
+              v-model="submitForm.description"
+              class="s-input s-textarea"
+              rows="3"
+              maxlength="500"
+              placeholder="说明一下这张图（可留空）"
+            />
+
+            <div class="field-label">分类 <span class="muted-text">（可多选，也可以不选）</span></div>
+            <div v-if="categories.length" class="mood-row">
+              <button
+                v-for="c in categories"
+                :key="c.id"
+                class="chip"
+                :class="{ 'is-on': submitForm.categoryIds.includes(c.id) }"
+                :aria-pressed="submitForm.categoryIds.includes(c.id)"
+                @click="toggleCategory(c.id)"
+              >
+                {{ c.name }}
+              </button>
+            </div>
+            <p v-else class="empty-note-sm">分类加载中…</p>
+
+            <div class="submit-note">
+              <AppIcon name="info" :size="14" />
+              <p>
+                投稿会进入站内<b>审核队列</b>，管理员通过后才对所有人可见。
+                图片会按可用的最高清晰度提交，必要时自动压到 10MB 以内。
+              </p>
+            </div>
+
+            <div v-if="submitting" class="progress" aria-hidden="true">
+              <span :style="{ width: submitProgress + '%' }" />
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot submit-foot">
+          <button class="s-btn s-btn-ghost" :disabled="submitting" @click="showSubmit = false">先不投</button>
+          <button class="s-btn s-btn-primary" :disabled="submitting" @click="submitWork">
+            {{ submitting ? (submitProgress ? '上传中 ' + submitProgress + '%' : '准备中…') : '确认投稿' }}
+          </button>
+        </div>
+      </template>
+
+      <template v-else>
+        <div class="submit-done">
+          <span class="done-stamp"><AppIcon name="check" :size="26" :stroke-width="2.4" /></span>
+          <h3 class="display">已经进审核队列了</h3>
+          <p>管理员通过后，它会出现在站内图库里。到时候可以到个人主页看状态。</p>
+          <div class="modal-foot center">
+            <button class="s-btn s-btn-outline" @click="showSubmit = false">继续做图</button>
+            <button class="s-btn s-btn-primary" @click="router.push('/profile')">去个人主页</button>
+          </div>
+        </div>
+      </template>
+    </UiModal>
   </div>
 </template>
 
 <style scoped>
-/* ── 工坊整体：一块常暗的工作台，跟站点主题解耦 ── */
+/* ─────────────────────────────────────────────────────────────
+   表情包工坊 · 站点纸感风格
+   所有颜色都走 style.css 里的 token，浅色/深色自动跟随。
+   ───────────────────────────────────────────────────────────── */
+
 .studio {
-  --ink: #0b1020;
-  --ink-2: #121a2e;
-  --line: rgba(148, 163, 184, 0.18);
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #facc15;
-  --accent-2: #fb923c;
-  background:
-    radial-gradient(1200px 600px at 12% -10%, rgba(250, 204, 21, 0.12), transparent 60%),
-    radial-gradient(900px 500px at 92% 0%, rgba(59, 130, 246, 0.14), transparent 55%),
-    var(--ink);
-  color: var(--text);
-  min-height: calc(100vh - 4rem);
-  padding: 1rem 1rem 1.5rem;
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+  background: var(--paper);
+  color: var(--ink);
+  padding: clamp(18px, 3vw, 34px) 0 70px;
 }
 
-@media (min-width: 1280px) {
-  .studio {
-    padding: 1rem 1.25rem;
-  }
+.studio-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
 }
+.studio-bg .dot-field {
+  position: absolute;
+  inset: 0;
+  opacity: 0.38;
+}
+.blob {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(70px);
+  opacity: 0.55;
+}
+.blob-butter {
+  top: -180px;
+  right: -90px;
+  width: 560px;
+  height: 440px;
+  background: color-mix(in srgb, var(--butter) 42%, transparent);
+}
+.blob-accent {
+  bottom: -140px;
+  left: -140px;
+  width: 460px;
+  height: 380px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.studio-shell {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── 顶栏 ── */
 
 .studio-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem 1rem;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.35rem 0.25rem 0.9rem;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 24px;
 }
-
-.studio-title {
+.studio-intro {
+  max-width: 700px;
+  min-width: 0;
+}
+.studio-kicker {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  font-size: 1.5rem;
-  font-weight: 800;
-  letter-spacing: 0.01em;
-  margin: 0;
+  gap: 10px;
+  margin-bottom: 11px;
 }
-
-.studio-logo {
-  display: inline-grid;
-  place-items: center;
-  width: 2.1rem;
-  height: 2.1rem;
-  border-radius: 0.7rem;
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  font-size: 1.15rem;
-  box-shadow: 0 8px 24px rgba(250, 204, 21, 0.28);
+.kicker-line {
+  width: 34px;
+  height: 1px;
+  background: var(--line-strong);
 }
-
-.studio-badge {
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  padding: 0.18rem 0.42rem;
-  border-radius: 999px;
-  border: 1px solid rgba(250, 204, 21, 0.45);
+.kicker-tag {
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  border-radius: 4px;
   color: var(--accent);
-  transform: translateY(-1px);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.18em;
 }
-
-.studio-sub {
-  margin: 0.3rem 0 0;
+.studio-title-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.studio-stamp {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border: 1.5px solid #181510;
+  border-radius: 13px;
+  background: var(--butter);
+  box-shadow: 3px 3px 0 #181510;
+  color: #181510;
+  font-family: var(--font-display);
+  font-size: 31px;
+  line-height: 1;
+  transform: rotate(-5deg);
+}
+.studio-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(38px, 5vw, 58px);
+  font-weight: 400;
+  line-height: 0.95;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.period {
+  color: var(--accent);
+}
+.studio-lede {
+  max-width: 590px;
+  margin: 14px 0 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.8;
+  text-wrap: pretty;
+}
+.studio-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 13px;
+}
+.studio-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
 }
 
 .studio-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 7px;
 }
 
-/* ── 通用按钮 ── */
-.btn {
+/* ── 按钮 ── */
+
+.s-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  border-radius: 0.65rem;
-  border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--text);
-  font-size: 0.82rem;
-  padding: 0.44rem 0.72rem;
-  cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 14px;
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
   white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 0.22s var(--ease-spring),
+    background 0.2s var(--ease-out-expo),
+    color 0.2s var(--ease-out-expo),
+    border-color 0.2s var(--ease-out-expo),
+    box-shadow 0.2s var(--ease-out-expo);
 }
-.btn:hover:not(:disabled) {
-  background: rgba(148, 163, 184, 0.18);
-  border-color: rgba(148, 163, 184, 0.35);
-}
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.btn-primary {
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  border-color: transparent;
-  color: #1f1300;
-  font-weight: 700;
-  box-shadow: 0 10px 26px rgba(250, 204, 21, 0.22);
-}
-.btn-primary:hover:not(:disabled) {
+.s-btn:hover:not(:disabled) {
   transform: translateY(-1px);
 }
-.btn-danger {
-  border-color: rgba(248, 113, 113, 0.5);
-  color: #fca5a5;
+.s-btn:active:not(:disabled) {
+  transform: scale(0.97) translateY(1px);
 }
-.btn-xs {
-  font-size: 0.72rem;
-  padding: 0.28rem 0.5rem;
-  border-radius: 0.5rem;
+.s-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
-.btn-ghost {
-  backdrop-filter: blur(6px);
+.s-btn-primary {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+.s-btn-primary:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--accent) 72%, transparent);
+}
+.s-btn-outline {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--ink);
+}
+.s-btn-outline:hover:not(:disabled) {
+  border-color: var(--ink);
+  background: var(--surface);
+}
+.s-btn-ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+.s-btn-icon {
+  width: 38px;
+  padding: 0;
+}
+.s-btn-sm {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+.s-btn-xs {
+  height: 28px;
+  padding: 0 9px;
+  font-size: 11px;
+}
+.s-btn-danger {
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  color: var(--accent);
+}
+.s-btn-danger:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.s-btn-help {
+  border-color: var(--line);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+.s-btn-help:hover:not(:disabled) {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+.s-btn-block {
+  width: 100%;
+}
+.undo-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+.undo-group .s-btn {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+}
+.undo-group .s-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.optional-md {
+  display: none;
 }
 
 /* ── 三栏骨架 ── */
-.studio-grid {
+
+.workbench {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.85rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
 }
-
-@media (min-width: 1024px) {
-  .studio-grid {
-    grid-template-columns: 288px minmax(0, 1fr);
-  }
-}
-
-@media (min-width: 1440px) {
-  .studio-grid {
-    grid-template-columns: 300px minmax(0, 1fr) 340px;
-    align-items: start;
-  }
-  .studio-rail-right {
-    position: sticky;
-    top: 4.6rem;
-    max-height: calc(100vh - 5.6rem);
-    overflow-y: auto;
-  }
-  .studio-rail-left {
-    position: sticky;
-    top: 4.6rem;
-    max-height: calc(100vh - 5.6rem);
-  }
-}
-
-.studio-rail {
+.panel {
+  min-width: 0;
   border: 1px solid var(--line);
-  border-radius: 1rem;
-  background: linear-gradient(180deg, rgba(18, 26, 46, 0.92), rgba(11, 16, 32, 0.92));
-  padding: 0.85rem;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.panel-title {
+  margin: 4px 0 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--ink);
+}
+.panel-body {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
+  gap: 18px;
+  padding: 14px 16px 16px;
 }
-
-.studio-rail-left {
+.rail-left {
   display: none;
 }
-@media (min-width: 1024px) {
-  .studio-rail-left {
-    display: flex;
-  }
-  /* 中屏：右栏落到下方并排 */
-}
-@media (min-width: 1024px) and (max-width: 1439px) {
-  .studio-rail-right {
-    grid-column: 1 / -1;
-  }
-}
-
-/* 移动端把左栏变成抽屉 */
-.studio-rail-left.rail-open {
-  display: flex;
-  position: fixed;
-  inset: 0.5rem;
-  z-index: 60;
-  overflow-y: auto;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
-}
-
-.rail-section {
+.rail-right {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
 }
 
-.rail-section + .rail-section {
+/* ── 左栏内容 ── */
+
+.rail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.rail-block + .rail-block {
+  padding-top: 16px;
   border-top: 1px dashed var(--line);
-  padding-top: 0.85rem;
 }
-
-.rail-grow {
+.rail-block.grow {
   min-height: 0;
 }
-
-.rail-head {
+.block-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
-
-.rail-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.rail-title {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+.block-label {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
+}
+.block-count {
   color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.muted-text {
+  color: var(--muted);
+  font-weight: 400;
 }
 
-.rail-note {
-  font-size: 0.72rem;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-
-.rail-check {
+.base-card {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.72rem;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-/* ── 分段控件 ── */
-.seg {
-  display: inline-flex;
-  padding: 0.15rem;
-  border-radius: 0.6rem;
-  background: rgba(148, 163, 184, 0.1);
+  gap: 10px;
+  padding: 8px;
   border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
 }
-.seg-btn {
-  border: 0;
-  background: transparent;
+.base-thumb {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 46px;
+  height: 46px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
   color: var(--muted);
-  font-size: 0.72rem;
-  padding: 0.24rem 0.5rem;
-  border-radius: 0.45rem;
-  cursor: pointer;
+}
+.base-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.base-info {
+  min-width: 0;
+}
+.base-name {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.seg-btn:hover {
-  color: var(--text);
+.base-dim {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
 }
-.seg-on {
-  background: rgba(250, 204, 21, 0.16);
-  color: var(--accent);
-  font-weight: 700;
+.rail-btn-row {
+  display: flex;
+  gap: 6px;
+}
+.rail-btn-row .s-btn {
+  flex: 1;
+  min-width: 0;
+  padding-inline: 6px;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.check-row:not(.is-disabled) {
+  color: var(--ink-2);
+}
+.check-row.is-disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.check-row.is-disabled .check-box {
+  cursor: not-allowed;
+}
+.check-box {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--paper);
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+.check-box.is-on {
+  border-color: var(--ink);
+  background: var(--ink);
 }
 
-/* ── 图库网格 ── */
+/* 图库搜索 / 排序 */
+
+.gallery-search {
+  position: relative;
+}
+.gallery-search > svg {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  color: var(--muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.gallery-search input {
+  width: 100%;
+  height: 36px;
+  padding: 0 30px 0 32px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  outline: none;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.gallery-search input::placeholder {
+  color: var(--muted);
+}
+.gallery-search input:focus {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.search-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  color: var(--muted);
+  transform: translateY(-50%);
+}
+.search-clear:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+/* 分段控件 */
+
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+}
+.seg-btn {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.seg-btn:hover:not(:disabled) {
+  color: var(--ink);
+}
+.seg-btn.is-on {
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 600;
+}
+.seg-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.seg-compact {
+  width: 100%;
+}
+.seg-compact .seg-btn {
+  flex: 1;
+}
+.seg-tiny {
+  padding: 1px;
+}
+.seg-tiny .seg-btn {
+  height: 24px;
+  padding: 0 7px;
+  font-size: 10.5px;
+}
+
+/* 图库 */
+
+.gallery-scroll {
+  max-height: 292px;
+  padding-right: 2px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
 .gallery-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.35rem;
-  overflow-y: auto;
-  max-height: 34vh;
-  padding-right: 0.15rem;
-}
-@media (min-width: 1440px) {
-  .gallery-grid {
-    max-height: 30vh;
-  }
+  gap: 5px;
 }
 .gallery-cell {
   position: relative;
   aspect-ratio: 1;
-  border-radius: 0.6rem;
-  overflow: hidden;
-  border: 1px solid transparent;
   padding: 0;
-  cursor: pointer;
-  background: rgba(148, 163, 184, 0.08);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
 }
 .gallery-cell img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
-  transition: transform 0.25s ease;
-}
-.gallery-cell:hover {
-  border-color: var(--accent);
+  transition: transform 0.3s var(--ease-out-expo);
 }
 .gallery-cell:hover img {
-  transform: scale(1.07);
+  transform: scale(1.06);
+}
+.gallery-cell:hover {
+  border-color: var(--line-strong);
+}
+.gallery-cell.is-active {
+  border-color: transparent;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.cell-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.skeleton {
+  border-color: transparent;
+  background: linear-gradient(100deg, var(--surface-2) 20%, var(--paper) 50%, var(--surface-2) 80%);
+  background-size: 200% 100%;
+  animation: studio-shimmer 1.4s linear infinite;
+}
+@keyframes studio-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+.empty-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.empty-note p {
+  margin: 0;
+}
+.empty-note-sm {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+.gallery-more {
+  width: 100%;
+  border: 1px dashed var(--line-strong);
 }
 
+/* 我的作品 */
+
+.works-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
 .work-cell {
   position: relative;
   aspect-ratio: 1;
-  border-radius: 0.6rem;
   overflow: hidden;
   border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
 }
 .work-cell img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
   cursor: pointer;
+  transition: transform 0.3s var(--ease-out-expo);
+}
+.work-cell:hover img {
+  transform: scale(1.05);
 }
 .work-del {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 1.1rem;
-  height: 1.1rem;
+  top: 3px;
+  right: 3px;
   display: grid;
   place-items: center;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
-  border: 0;
-  font-size: 0.6rem;
-  background: rgba(15, 23, 42, 0.75);
-  color: #fca5a5;
-  cursor: pointer;
+  background: color-mix(in srgb, var(--ink) 74%, transparent);
+  color: var(--paper);
+  opacity: 0.62;
+  transition: opacity 0.2s ease;
+}
+.work-cell:hover .work-del,
+.work-del:focus-visible {
+  opacity: 1;
 }
 
 /* ── 舞台 ── */
-.studio-stage {
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  background: linear-gradient(180deg, rgba(18, 26, 46, 0.9), rgba(9, 13, 26, 0.95));
-  padding: 0.7rem 0.7rem 0.55rem;
+
+.stage-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
-  min-height: 0;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
 }
-@media (min-width: 1024px) {
-  .studio-stage {
-    height: calc(100vh - 9.2rem);
-    min-height: 460px;
-  }
-}
-
 .stage-toolbar {
   display: flex;
-  align-items: center;
-  gap: 0.6rem;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 .stage-hint {
   margin-left: auto;
-  font-size: 0.72rem;
   color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+.rail-open-btn {
+  display: inline-flex;
 }
 
-.stage-box {
+.stage-mat {
   position: relative;
-  flex: 1;
-  min-height: 260px;
   display: grid;
   place-items: center;
-  border-radius: 0.8rem;
-  background-image:
-    linear-gradient(45deg, rgba(148, 163, 184, 0.07) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(148, 163, 184, 0.07) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.07) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.07) 75%);
-  background-size: 22px 22px;
-  background-position: 0 0, 0 11px, 11px -11px, -11px 0;
-  overflow: hidden;
+  height: clamp(380px, calc(100dvh - 420px), 680px);
+  min-height: 340px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background-color: var(--paper-deep);
+  background-image: radial-gradient(color-mix(in srgb, var(--ink) 10%, transparent) 0.8px, transparent 0.8px);
+  background-size: 14px 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-
+.stage-mat.is-drop {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.stage-tape {
+  position: absolute;
+  top: -8px;
+  z-index: 2;
+  width: 70px;
+  height: 18px;
+  border-left: 1px dashed color-mix(in srgb, var(--ink) 18%, transparent);
+  border-right: 1px dashed color-mix(in srgb, var(--ink) 18%, transparent);
+  background: color-mix(in srgb, var(--butter) 62%, transparent);
+  opacity: 0.82;
+  pointer-events: none;
+}
+.stage-tape-l {
+  left: 10%;
+  transform: rotate(-2deg);
+}
+.stage-tape-r {
+  right: 10%;
+  transform: rotate(2deg);
+}
 .stage-canvas {
   display: block;
-  border-radius: 0.5rem;
-  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.5);
-  touch-action: none;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 3px;
+  box-shadow: var(--shadow-hard-sm), 0 20px 44px -28px rgba(20, 15, 8, 0.6);
   cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 .stage-canvas:active {
   cursor: grabbing;
 }
+.drop-overlay {
+  position: absolute;
+  inset: 10px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px dashed var(--accent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  backdrop-filter: blur(2px);
+}
+
+/* 一键出片 */
+
+.recipe-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line);
+}
+.recipe-lead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+}
+.recipe-lead .eyebrow {
+  color: var(--accent);
+}
+.recipe-lead-note {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+.recipe-scroll {
+  display: flex;
+  gap: 5px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.recipe-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 11px;
+  white-space: nowrap;
+  transition:
+    transform 0.18s var(--ease-spring),
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.recipe-btn:hover {
+  transform: translateY(-2px);
+  border-color: var(--ink);
+  color: var(--ink);
+  box-shadow: var(--shadow-hard-sm);
+}
+.recipe-btn:active {
+  transform: translateY(0) scale(0.98);
+}
+.recipe-btn span:first-child {
+  font-size: 13px;
+}
+
+/* 舞台底栏 */
 
 .stage-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  font-size: 0.72rem;
-  color: var(--muted);
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 2px;
 }
 .stage-foot-left {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.45rem;
+  gap: 6px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--jade);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--jade) 18%, transparent);
+}
+.foot-sep {
+  color: var(--line-strong);
+}
+.draft-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 .stage-foot-right {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 6px;
+  margin-left: auto;
 }
-.dot {
-  width: 0.45rem;
-  height: 0.45rem;
+.foot-label {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.quick-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: #34d399;
-  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.15);
+  background: var(--paper);
 }
-.sel-tag {
-  color: #7dd3fc;
+.quick-label {
+  padding: 0 6px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+.q-btn {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: 10.5px;
+}
+.q-btn:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.q-danger {
+  color: var(--accent);
+}
+.q-done {
+  background: var(--ink);
+  color: var(--paper);
+}
+.q-done:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
-/* ── 版式按钮 ── */
+/* ── 右栏：标签页 / 控件 ── */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
+}
+.tab {
+  display: inline-flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 62px;
+  height: 44px;
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 10.5px;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.tab:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+.tab.is-active {
+  background: var(--ink);
+  color: var(--paper);
+}
+.tab-body {
+  padding-top: 14px;
+}
+.tab-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 选中项卡片 */
+
+.selection-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 12px 0;
+  padding: 12px;
+  border: 1.5px solid var(--ink);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-hard-sm);
+}
+.selection-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.selection-title {
+  margin: 3px 0 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1;
+}
+.icon-mini {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  color: var(--muted);
+}
+.icon-mini:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+.selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.field-label {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.field-val {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.range {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  outline: none;
+  background: var(--line);
+  appearance: none;
+}
+.range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  cursor: pointer;
+  appearance: none;
+}
+.range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  cursor: pointer;
+}
+.range:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.swatch {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px var(--line-strong);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.swatch:hover {
+  transform: scale(1.1);
+}
+.swatch.is-on {
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: scale(1.06);
+}
+.color-pick {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  overflow: hidden;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.color-pick input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.color-pick:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+.font-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.font-chip {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+.align-seg {
+  width: 100%;
+}
+.align-seg .seg-btn {
+  flex: 1;
+}
+.toggle {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.toggle.is-on {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* 版式 */
+
 .tpl-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.4rem;
+  gap: 5px;
 }
 .tpl-btn {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.45rem 0.5rem;
-  border-radius: 0.6rem;
+  gap: 6px;
+  min-height: 38px;
+  padding: 6px 8px;
   border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.07);
-  color: var(--text);
-  font-size: 0.78rem;
-  cursor: pointer;
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink-2);
+  font-size: 11.5px;
   text-align: left;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
 }
 .tpl-btn:hover {
-  border-color: rgba(250, 204, 21, 0.5);
+  border-color: var(--line-strong);
+  color: var(--ink);
 }
-.tpl-on {
-  border-color: var(--accent);
-  background: rgba(250, 204, 21, 0.14);
+.tpl-btn.is-on {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
 }
 .tpl-emoji {
-  font-size: 0.95rem;
+  font-size: 14px;
 }
 .tpl-name {
   overflow: hidden;
@@ -2001,35 +3583,40 @@ function setAspect(a: MemeAspect) {
   white-space: nowrap;
 }
 
-/* ── 文案 ── */
+/* 文案 */
+
 .mood-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3rem;
+  gap: 4px;
 }
 .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 9px;
   border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--muted);
-  font-size: 0.7rem;
-  padding: 0.22rem 0.45rem;
   border-radius: 999px;
-  cursor: pointer;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
 }
 .chip:hover {
-  color: var(--text);
+  border-color: var(--line-strong);
+  color: var(--ink);
 }
-.chip-on {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: rgba(250, 204, 21, 0.12);
-  font-weight: 700;
+.chip.is-on {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
 }
-
 .copy-row {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0.28rem;
+  gap: 5px;
 }
 .copy-head {
   display: flex;
@@ -2037,380 +3624,213 @@ function setAspect(a: MemeAspect) {
   justify-content: space-between;
 }
 .copy-label {
-  font-size: 0.74rem;
-  color: var(--text);
+  color: var(--ink);
+  font-size: 11.5px;
   font-weight: 600;
 }
 .copy-input {
   width: 100%;
+  min-height: 58px;
+  padding: 8px 10px 18px;
   resize: vertical;
-  border-radius: 0.55rem;
   border: 1px solid var(--line);
-  background: rgba(2, 6, 23, 0.55);
-  color: var(--text);
-  font-size: 0.85rem;
-  padding: 0.42rem 0.55rem;
-  line-height: 1.4;
+  border-radius: 12px;
+  outline: none;
+  background: var(--paper);
+  color: var(--ink);
   font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.55;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .copy-input:focus {
-  outline: none;
-  border-color: rgba(250, 204, 21, 0.6);
-  box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.12);
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
-
-/* ── 选中项控制 ── */
-.rail-focus {
-  border: 1px solid rgba(56, 189, 248, 0.35);
-  border-radius: 0.75rem;
-  padding: 0.7rem;
-  background: rgba(56, 189, 248, 0.06);
-}
-.ctl-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.ctl-label {
-  font-size: 0.72rem;
-  color: var(--muted);
-  width: 2.4rem;
-  flex: none;
-}
-.ctl-val {
-  font-size: 0.7rem;
-  color: var(--muted);
-  width: 2.6rem;
-  text-align: right;
-  flex: none;
-  font-variant-numeric: tabular-nums;
-}
-.range {
-  flex: 1;
-  min-width: 0;
-  appearance: none;
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.3);
-  outline: none;
-}
-.range::-webkit-slider-thumb {
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: var(--accent);
-  border: 2px solid #1f1300;
-  cursor: pointer;
-}
-.range::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: var(--accent);
-  border: 2px solid #1f1300;
-  cursor: pointer;
-}
-.swatches {
-  display: flex;
-  gap: 0.28rem;
-  flex-wrap: wrap;
-}
-.swatch {
-  width: 1.15rem;
-  height: 1.15rem;
-  border-radius: 999px;
-  border: 2px solid rgba(148, 163, 184, 0.35);
-  cursor: pointer;
-}
-.swatch-on {
-  border-color: #38bdf8;
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
-}
-.toggle {
-  flex: 1;
-  border-radius: 0.5rem;
+.selection-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  resize: vertical;
   border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--muted);
-  font-size: 0.72rem;
-  padding: 0.3rem 0.5rem;
-  cursor: pointer;
+  border-radius: 12px;
+  outline: none;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.55;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.toggle-on {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: rgba(250, 204, 21, 0.12);
+.selection-input:focus {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.counter {
+  position: absolute;
+  right: 8px;
+  bottom: 5px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
-/* ── 贴纸 ── */
+/* 贴纸 */
+
 .sticker-group {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 5px;
 }
 .sticker-label {
-  font-size: 0.68rem;
   color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
 }
 .sticker-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.22rem;
+  gap: 3px;
 }
 .sticker-btn {
-  width: 1.85rem;
-  height: 1.85rem;
   display: grid;
   place-items: center;
-  font-size: 1rem;
-  border-radius: 0.5rem;
-  border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.07);
-  cursor: pointer;
-  transition: transform 0.14s ease, border-color 0.14s ease;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 16px;
+  transition: transform 0.15s var(--ease-spring), background 0.15s ease, border-color 0.15s ease;
 }
 .sticker-btn:hover {
   transform: translateY(-2px) scale(1.08);
-  border-color: var(--accent);
+  border-color: var(--line);
+  background: var(--paper);
 }
 
-/* ── 小抄 ── */
-.tips {
-  margin: 0;
-  padding-left: 1.1rem;
-  font-size: 0.72rem;
+/* 提示卡 / kbd */
+
+.hint-card {
+  padding: 9px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--paper);
   color: var(--muted);
-  line-height: 1.75;
+  font-size: 10.5px;
+  line-height: 1.65;
 }
-.tips b {
-  color: var(--text);
-}
-.tips kbd {
-  border: 1px solid var(--line);
-  border-radius: 0.3rem;
-  padding: 0 0.25rem;
-  font-size: 0.68rem;
-  color: var(--text);
-}
-
-/* ── 一键出片配方条 ── */
-.recipe-strip {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding-top: 0.1rem;
-}
-.recipe-lead {
-  flex: none;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--accent);
-  writing-mode: horizontal-tb;
-}
-.recipe-scroll {
-  display: flex;
-  gap: 0.35rem;
-  overflow-x: auto;
-  padding-bottom: 0.15rem;
-  scrollbar-width: thin;
-}
-.recipe-btn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.3rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--text);
-  font-size: 0.74rem;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
-}
-.recipe-btn:hover {
-  transform: translateY(-2px);
-  border-color: var(--accent);
-  background: rgba(250, 204, 21, 0.12);
-}
-.recipe-emoji {
-  font-size: 0.9rem;
-}
-.recipe-name {
-  font-weight: 600;
-}
-
-/* ── 投稿弹窗 ── */
-.submit-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: grid;
+kbd {
+  display: inline-grid;
   place-items: center;
-  padding: 1rem;
-  background: rgba(2, 6, 23, 0.72);
-  backdrop-filter: blur(4px);
-}
-.submit-panel {
-  width: min(720px, 100%);
-  max-height: 90vh;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  background: linear-gradient(180deg, #141d33, #0b1020);
-  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.6);
-  padding: 1rem 1.1rem 1.1rem;
-  color: var(--text);
-}
-.submit-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 0.7rem;
-  border-bottom: 1px dashed var(--line);
-}
-.submit-title {
-  font-weight: 800;
-  font-size: 1rem;
-}
-.submit-body {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
-  padding: 0.9rem 0 0.2rem;
-}
-@media (min-width: 640px) {
-  .submit-body:not(.submit-done) {
-    grid-template-columns: 200px minmax(0, 1fr);
-  }
-}
-.submit-preview {
-  width: 100%;
-  height: auto;
-  border-radius: 0.6rem;
-  border: 1px solid var(--line);
-  align-self: start;
-}
-.submit-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  min-width: 0;
-}
-.submit-label {
-  font-size: 0.72rem;
-  color: var(--muted);
-  margin-top: 0.35rem;
-}
-.submit-hint {
-  opacity: 0.7;
-}
-.submit-note {
-  margin: 0.7rem 0 0;
-  font-size: 0.72rem;
-  color: var(--muted);
-  line-height: 1.7;
-}
-.submit-note b {
-  color: var(--accent);
-}
-.submit-foot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  padding-top: 0.9rem;
-}
-.submit-done {
-  text-align: center;
-}
-.submit-done-emoji {
-  font-size: 2.6rem;
-}
-.submit-done-text {
-  margin: 0;
-  font-size: 0.88rem;
-  line-height: 1.9;
-}
-.submit-done .submit-foot {
-  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 4px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  line-height: 1;
 }
 
 /* ── 灵感墙 ── */
+
 .wall {
-  margin-top: 1.1rem;
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  background: linear-gradient(180deg, rgba(18, 26, 46, 0.75), rgba(9, 13, 26, 0.85));
-  padding: 1rem 0.9rem 1.1rem;
+  margin-top: 34px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
 }
 .wall-head {
-  margin-bottom: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 18px;
 }
 .wall-title {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-.wall-title::before {
-  content: '✨';
-  font-size: 0.95rem;
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: clamp(30px, 3.4vw, 42px);
+  font-weight: 400;
+  line-height: 1;
 }
 .wall-sub {
-  margin: 0.3rem 0 0;
-  font-size: 0.76rem;
-  color: var(--muted);
-  line-height: 1.6;
+  max-width: 560px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.75;
+  text-wrap: pretty;
 }
 .wall-sub strong {
   color: var(--accent);
 }
-.wall-empty {
-  font-size: 0.76rem;
-  color: var(--muted);
-}
 .wall-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.6rem;
-}
-@media (min-width: 768px) {
-  .wall-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-@media (min-width: 1280px) {
-  .wall-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
+  gap: 12px;
+  padding: 6px 2px 4px;
 }
 .wall-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.4rem;
-  border-radius: 0.75rem;
+  gap: 7px;
+  padding: 9px 9px 11px;
   border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.06);
-  cursor: pointer;
+  border-radius: 14px;
+  background: var(--surface);
   text-align: left;
-  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  transition:
+    transform 0.35s var(--ease-out-expo),
+    box-shadow 0.35s var(--ease-out-expo),
+    border-color 0.2s ease;
+}
+.wall-card:nth-child(4n + 1) {
+  transform: rotate(-0.7deg);
+}
+.wall-card:nth-child(4n + 3) {
+  transform: rotate(0.6deg);
 }
 .wall-card:hover {
-  transform: translateY(-3px);
-  border-color: var(--accent);
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.4);
+  transform: translateY(-4px) rotate(0deg);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-soft);
+}
+.wall-card:nth-child(3n + 2)::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  width: 56px;
+  height: 16px;
+  border-left: 1px dashed color-mix(in srgb, var(--ink) 16%, transparent);
+  border-right: 1px dashed color-mix(in srgb, var(--ink) 16%, transparent);
+  background: color-mix(in srgb, var(--butter) 72%, transparent);
+  transform: translateX(-50%) rotate(-2deg);
+  pointer-events: none;
+}
+.wall-num {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.14em;
 }
 .wall-canvas-wrap {
   display: block;
-  border-radius: 0.5rem;
   overflow: hidden;
-  background: #0b1020;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper-deep);
 }
 .wall-canvas {
   display: block;
@@ -2420,43 +3840,483 @@ function setAspect(a: MemeAspect) {
 .wall-meta {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
-  padding: 0 0.15rem 0.15rem;
+  gap: 2px;
+  padding: 0 2px;
 }
 .wall-name {
-  font-size: 0.76rem;
-  font-weight: 700;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1.1;
 }
 .wall-from {
-  font-size: 0.66rem;
-  color: var(--muted);
   overflow: hidden;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.wall-empty {
+  padding: 24px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
 
-/* ── 提示条 ── */
-.studio-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 2.2rem;
-  transform: translateX(-50%);
-  z-index: 80;
-  padding: 0.55rem 1rem;
+/* ── 小抄 ── */
+
+.help-grid {
+  display: grid;
+  gap: 18px;
+}
+.help-title {
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 400;
+}
+.help-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.help-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 7px;
+  border-bottom: 1px dashed var(--line);
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+.help-list li:last-child {
+  border-bottom: 0;
+}
+.help-list li > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.tip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding-left: 16px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+.tip-list b {
+  color: var(--ink);
+}
+.help-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+/* ── 投稿弹窗 ── */
+
+.submit-grid {
+  display: grid;
+  gap: 18px;
+}
+.submit-preview-wrap {
+  align-self: start;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+}
+.submit-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+@media (max-width: 767px) {
+  .submit-preview-wrap {
+    display: flex;
+    justify-content: center;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto;
+  }
+  .submit-preview {
+    width: auto;
+    max-width: 100%;
+    max-height: 240px;
+  }
+  .submit-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin-top: 10px;
+    padding: 10px 0 2px;
+    background: var(--surface);
+    box-shadow: 0 -10px 18px -14px rgba(20, 15, 8, 0.35);
+  }
+}
+.submit-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.s-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: none;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12.5px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.s-input:focus {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.s-textarea {
+  height: auto;
+  min-height: 80px;
+  padding: 9px 10px;
+  resize: vertical;
+  line-height: 1.6;
+}
+.submit-fields .field-label {
+  margin-top: 6px;
+}
+.submit-note {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.65;
+}
+.submit-note p {
+  margin: 0;
+}
+.submit-note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent);
+}
+.submit-note b {
+  color: var(--ink);
+}
+.progress {
+  height: 5px;
+  margin-top: 8px;
+  overflow: hidden;
   border-radius: 999px;
-  font-size: 0.82rem;
-  color: #1f1300;
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
-  pointer-events: none;
+  background: var(--line);
 }
-.toast-enter-active,
-.toast-leave-active {
-  transition: opacity 0.22s ease, transform 0.22s ease;
+.progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
 }
-.toast-enter-from,
-.toast-leave-to {
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.modal-foot.center {
+  justify-content: center;
+}
+.submit-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 0 8px;
+  text-align: center;
+}
+.done-stamp {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border: 1.5px solid #181510;
+  border-radius: 999px;
+  background: var(--butter);
+  box-shadow: 3px 3px 0 #181510;
+  color: #181510;
+  transform: rotate(-4deg);
+}
+.submit-done h3 {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 400;
+}
+.submit-done p {
+  max-width: 380px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.75;
+}
+
+/* ── 移动端抽屉 ── */
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 89;
+  background: rgba(21, 17, 11, 0.48);
+  backdrop-filter: blur(3px);
+}
+.rail-close-btn {
+  display: inline-flex;
+}
+.rail-mobile-foot {
+  display: none;
+}
+.rail-open-btn {
+  display: inline-flex;
+}
+
+/* ── 过渡 ── */
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
-  transform: translate(-50%, 10px);
 }
+
+/* ── 响应式 ── */
+
+@media (min-width: 768px) {
+  .optional-md {
+    display: inline-flex;
+  }
+  .wall-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .help-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .submit-grid {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .workbench {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+  .rail-right {
+    grid-column: auto;
+  }
+  .wall-head {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 30px;
+  }
+}
+
+@media (min-width: 1180px) {
+  .studio-head {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 30px;
+  }
+  .studio-actions {
+    max-width: 700px;
+    justify-content: flex-end;
+  }
+}
+
+@media (min-width: 1280px) {
+  .rail-left {
+    display: flex;
+    flex-direction: column;
+  }
+  .rail-close-btn,
+  .rail-mobile-foot,
+  .rail-open-btn {
+    display: none;
+  }
+  .drawer-backdrop {
+    display: none;
+  }
+  .workbench {
+    grid-template-columns: 280px minmax(0, 1fr) 324px;
+  }
+  .rail-right {
+    grid-column: auto;
+    position: sticky;
+    top: calc(var(--header-h) + 12px);
+    max-height: calc(100dvh - var(--header-h) - 26px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  .rail-left {
+    position: sticky;
+    top: calc(var(--header-h) + 12px);
+    max-height: calc(100dvh - var(--header-h) - 26px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  .wall-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
+@media (max-width: 1279px) {
+  .rail-left.is-open {
+    position: fixed;
+    top: calc(var(--header-h) + 10px);
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+    max-height: none;
+    overflow-y: auto;
+    border-color: var(--line-strong);
+    border-radius: 24px;
+    background: var(--surface);
+    box-shadow: 0 30px 80px -20px rgba(20, 15, 8, 0.7);
+  }
+  .rail-left.is-open .rail-mobile-foot {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    padding: 12px 16px 14px;
+    border-top: 1px solid var(--line);
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(8px);
+  }
+  .rail-left.is-open .gallery-scroll {
+    max-height: 44vh;
+  }
+  .rail-left.is-open .works-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 640px) {
+  .rail-left.is-open .gallery-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .rail-left.is-open .gallery-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1023px) {
+  /* 手机上选中文字/贴纸后，快捷条固定在底部浮动层，别让用户滚半天 */
+  .quick-bar {
+    position: fixed;
+    right: 12px;
+    bottom: calc(84px + env(safe-area-inset-bottom));
+    left: 12px;
+    z-index: 45;
+    flex-wrap: nowrap;
+    justify-content: center;
+    overflow-x: auto;
+    background: var(--surface);
+    box-shadow: var(--shadow-soft);
+  }
+}
+
+@media (max-width: 767px) {
+  .studio-title {
+    font-size: 37px;
+  }
+  .studio-stamp {
+    width: 44px;
+    height: 44px;
+    font-size: 26px;
+    border-radius: 11px;
+  }
+  .studio-lede {
+    font-size: 12.5px;
+  }
+  .studio-actions {
+    gap: 6px;
+  }
+  .s-btn {
+    height: 36px;
+    padding: 0 11px;
+    font-size: 11.5px;
+  }
+  .s-btn-icon {
+    width: 36px;
+  }
+  .undo-group .s-btn {
+    width: 30px;
+    height: 30px;
+  }
+  .stage-mat {
+    height: min(58dvh, 480px);
+    min-height: 320px;
+    padding: 12px;
+  }
+  .stage-hint {
+    display: none;
+  }
+  .recipe-lead-note {
+    display: none;
+  }
+  .wall-from {
+    font-size: 7.5px;
+  }
+  .help-list li {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 420px) {
+  .studio-title {
+    font-size: 33px;
+  }
+  .studio-meta span:nth-child(2) {
+    display: none;
+  }
+  .recipe-btn {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 10.5px;
+  }
+  .stage-foot-right {
+    margin-left: 0;
+  }
+}
+
 </style>

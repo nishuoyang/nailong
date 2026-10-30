@@ -8,7 +8,7 @@ const iconByType = { success: 'check', error: 'alert', info: 'info', warning: 'a
 
 <template>
   <Teleport to="body">
-    <div class="pointer-events-none fixed bottom-6 left-1/2 z-[120] flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4" role="status" aria-live="polite">
+    <div class="toast-host pointer-events-none fixed left-1/2 z-[120] flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4" role="status" aria-live="polite">
       <TransitionGroup name="toast">
         <div
           v-for="t in state.items"
@@ -29,6 +29,15 @@ const iconByType = { success: 'check', error: 'alert', info: 'info', warning: 'a
 </template>
 
 <style scoped>
+/* 手机上底部有固定 Dock，提示条要抬到它上面，别糊住导航 */
+.toast-host {
+  bottom: calc(96px + env(safe-area-inset-bottom));
+}
+@media (min-width: 1024px) {
+  .toast-host {
+    bottom: 24px;
+  }
+}
 .toast-enter-active,
 .toast-leave-active {
   transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
