@@ -21,6 +21,9 @@
 FROM nailonghub-server:latest
 
 COPY dist /app/dist
+# COPY 目录是合并语义：基础镜像里存在、而本次产物里已删除的静态文件
+# （例如下架的 story 图片）不会自动消失。先清空再拷贝，保证线上与产物一致。
+RUN rm -rf /app/client-dist
 COPY client-dist /app/client-dist
 COPY prisma /app/prisma
 COPY seed.js /app/seed.js
