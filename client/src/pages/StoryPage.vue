@@ -1,444 +1,1318 @@
 <script setup lang="ts">
-// 奶龙 → 奶蛙 发展史专题页（内容基于公开报道与考据，全部事实均标注来源，见页面底部「参考资料」）
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AppIcon from '@/components/ui/AppIcon.vue'
+import NaiwaFace from '@/components/story/NaiwaFace.vue'
+import StoryFamily from '@/components/story/StoryFamily.vue'
+import StoryLexicon from '@/components/story/StoryLexicon.vue'
+import StoryMorph from '@/components/story/StoryMorph.vue'
+import StoryRecipe from '@/components/story/StoryRecipe.vue'
+import StorySectionHead from '@/components/story/StorySectionHead.vue'
+import StoryTimeline from '@/components/story/StoryTimeline.vue'
+import {
+  chapters,
+  heroStats,
+  sourceKindLabel,
+  sources,
+  type SourceKind,
+} from '@/data/naiwaStory'
 
-interface VideoItem {
-  title: string
-  author: string
-  meta: string
-  desc: string
-  cover: string
-  url: string
-  bvid?: string
-  tag: string
+/* ------------------------------------------------------------------
+   阅读进度 & 章节高亮
+------------------------------------------------------------------- */
+const activeChapter = ref('s00')
+const progress = ref(0)
+let observer: IntersectionObserver | undefined
+
+function onScroll() {
+  const scrollable = document.documentElement.scrollHeight - window.innerHeight
+  progress.value = scrollable > 0 ? Math.min(1, Math.max(0, window.scrollY / scrollable)) : 0
 }
 
-interface SourceItem {
-  no: string
-  title: string
-  meta: string
-  url: string
-  note?: string
+/* ------------------------------------------------------------------
+   图片灯箱
+------------------------------------------------------------------- */
+interface LightboxImage {
+  src: string
+  alt: string
+  caption?: string
+}
+const lightbox = ref<LightboxImage | null>(null)
+
+function openLightbox(image: LightboxImage) {
+  lightbox.value = image
 }
 
-// —— 关键节点（时间线）——
-const timeline: Array<{ date: string; title: string; desc: string; src: string }> = [
-  { date: '2020-01-22', title: '奶龙上线抖音', desc: '原创动画IP「奶龙」开始在短视频平台发布作品，长线创作由此开始。', src: '[1]' },
-  { date: '2020-12', title: '《好大一只变色龙！》爆款', desc: '单条作品获赞约 237 万，奶龙开始在抖音站稳脚跟。', src: '[1]' },
-  { date: '2021-01', title: '《好大一条眼镜蛇！》再创纪录', desc: '获赞约 379.7 万，成为奶龙早期代表作之一。', src: '[1]' },
-  { date: '2021-10', title: '官方微信表情包上线', desc: '第一套官方微信表情包上线，IP 从短视频走向聊天场景。', src: '[1]' },
-  { date: '2023-01', title: '第一季动画番剧推出', desc: '从 1 分钟段子短视频升级为系列动画番剧（百科作《奶龙搞怪大作战》）。', src: '[1]' },
-  { date: '2024-01', title: '第二季番剧上线', desc: '《奶龙与小七之大战暴暴龙》上线，IP 持续系列化。', src: '[1]' },
-  { date: '2024-10-02', title: '奶蛙诞生', desc: '星野 App 用户「纲手[百豪]」用 AI 为「奶龙」智能体（ID: zNCvQDKfXy）创作背景图，体型畸变、形似青蛙，被后人称为「奶蛙」。', src: '[4]' },
-  { date: '2024-12', title: '奶蛙形象首现社交平台', desc: '抖音博主「欢迎大家恐龙世界」（后设为私密账号）上传带「星野」字样的奶蛙视频，系可查证的首个传播节点。', src: '[4]' },
-  { date: '2025-03', title: '「季洪行 AI 融合」误传', desc: '网友将奶蛙与抖音博主「季洪行」的视频做 AI 融合，导致奶蛙长期被误认为「季洪行×奶龙」的产物。', src: '[4]' },
-  { date: '2025 至今', title: '奶蛙宇宙全面爆发', desc: '「奶蛙捧腹大笑 + 卡痰音大笑 + BABY DON’T CRY」成为抽象圈层经典迷因，二创渗透进名画、历史、神话等题材。', src: '[3]' },
-  { date: '2026-01', title: '「大笑奶龙」成为第一猎奇梗', desc: '「被 AI 变成奶龙的季洪行」配上「八级哥 × 老水牛变声器」的魔性笑声，「唐唐联合」烧遍全网，奶龙官方账号不得不关闭评论区。', src: '[11]' },
-  { date: '2026-08', title: '奶蛙来源正式考证确认', desc: '失传媒体中文维基完成考证：源头确认为星野 App 智能体背景图；B 站用户「雾蚀心忘症」也在星野 App 中找到对应智能体。', src: '[4]' },
-]
-
-// —— 视频素材（含解释）——
-const videos: VideoItem[] = [
-  {
-    title: '奶蛙这张图的由来我找到了',
-    author: 'B站 UP主：弹簧刀thd',
-    meta: 'Bilibili',
-    desc: '溯源型二创视频：从奶蛙经典形象出发，追查「这张图到底从哪来」，是奶蛙起源考据最常被引用的视频之一。',
-    cover: '/story/naiwa.jpg',
-    url: 'https://www.bilibili.com/video/BV1iY3d67Edg/',
-    bvid: 'BV1iY3d67Edg',
-    tag: '起源考据',
-  },
-  {
-    title: '09年dv录制奶蛙捧腹大笑',
-    author: 'B站 UP主：藤原妹红鸡',
-    meta: 'Bilibili',
-    desc: '「捧腹大笑」是奶蛙最经典的姿态：黑短四肢、白肚皮、大张的嘴与魔性笑声，配合伪 DV 画质形成强反差。',
-    cover: '/story/naiwa-laugh.jpg',
-    url: 'https://www.bilibili.com/video/BV1HZgV6TETB/',
-    bvid: 'BV1HZgV6TETB',
-    tag: '经典迷因',
-  },
-  {
-    title: '【奶蛙】斜视 meme',
-    author: 'B站 UP主：是默陌墨喵',
-    meta: 'Bilibili',
-    desc: '医学梗重构：用「滑车神经麻痹」示意解读奶蛙的斜视绿眼睛，是奶蛙二创「万物皆可学术化」的代表。',
-    cover: '/story/naiwa-squint.jpg',
-    url: 'https://www.bilibili.com/video/BV1AxhK6BE54/',
-    bvid: 'BV1AxhK6BE54',
-    tag: '二创解构',
-  },
-  {
-    title: '十年擦边无人问，cos奶龙天下知——互联网吊图合集270',
-    author: 'B站 UP主：账号已注销',
-    meta: 'Bilibili · 2024-10',
-    desc: '奶龙被抽象化的前夜：真人穿奶龙玩偶服出镜、擦边无人问津 vs cos 奶龙爆火，记录奶龙从「子供向 IP」被互联网解构的过程。',
-    cover: '/story/nailong-cos.jpg',
-    url: 'https://www.bilibili.com/video/BV1ajCDYjE1Y/',
-    tag: '史前记录',
-  },
-  {
-    title: '被缚的奶蛙（《方舟上的奶蛙》系列）',
-    author: '抖音',
-    meta: 'Douyin',
-    desc: '名画重构：奶蛙被铁链缚于悬崖，复刻普罗米修斯传说，「健硕肌肉 × 软萌青蛙」的反差消解了神话的严肃边界。',
-    cover: '/story/naiwa.jpg',
-    url: 'https://www.douyin.com/video/7632479202756063995',
-    tag: '名画二创',
-  },
-  {
-    title: '奶龙大笑出处完整版',
-    author: 'B站 UP主：녹색멜로디',
-    meta: 'Bilibili · 2026-03 · 321万播放',
-    desc: '「大笑奶龙」出处合集：完整收录 2026 年第一猎奇梗的核心笑声音源——经「老水牛变声器」处理的魔性大笑。大笑奶龙本体是「被 AI 变成奶龙的抖音博主季洪行」，声源则来自《无畏契约》博主「八级哥」，两个元素「唐唐联合」后横扫全网，甚至让奶龙官方账号关闭了评论区[11]。',
-    cover: '/story/nailong-daxiao.jpg',
-    url: 'https://www.bilibili.com/video/BV1zCPCz2Enq/',
-    bvid: 'BV1zCPCz2Enq',
-    tag: '笑声出处',
-  },
-]
-
-// —— 参考资料——
-const sources: SourceItem[] = [
-  {
-    no: '[1]',
-    title: '奶龙（中国动画短片创作者）· 百度百科',
-    meta: '创作脉络、作品数据、大事记',
-    url: 'https://wapbaike.baidu.com/item/%E5%A5%B6%E9%BE%99/64161212',
-  },
-  {
-    no: '[2]',
-    title: '「奶龙」出圈启示录：低龄IP的文旅变现密码 · 澎湃新闻/骨朵网络影视',
-    meta: '2025-04-30 · 爆火逻辑、全网粉丝 3600 万+、播放量破百亿、文旅联动',
-    url: 'https://m.thepaper.cn/newsDetail_forward_30748412',
-  },
-  {
-    no: '[3]',
-    title: '奶龙变成了奶蛙，我很想念它 · 机核 GCORES',
-    meta: '2026-07-13 · 用户投稿（文中标注含 AI 生成内容，仅供参考）',
-    url: 'https://www.gcores.com/articles/217077',
-    note: '⚠️ 该文为机核用户投稿且自称含 AI 生成内容，观点性较强，正文已标注。',
-  },
-  {
-    no: '[4]',
-    title: '奶蛙（来源确定的奶龙恶搞图片；2024年）· 失传媒体中文维基',
-    meta: '起源考证、传播节点、误传澄清，来源已正式确认',
-    url: 'https://lostmedia.wikidot.com/deleted:naiwa',
-  },
-  {
-    no: '[5]',
-    title: '在奶蛙、牛来后，神秘黄色袋鼠成了抽象宇宙新神 · 网易新闻/3DM游戏',
-    meta: '2026-08-23 · 「黄色三幻神」定位：奶蛙、牛来、美团袋鼠',
-    url: 'https://m.163.com/dy/article/L524A6P20526D8LR.html',
-  },
-  {
-    no: '[11]',
-    title: '2026第一猎奇梗「大笑奶龙」，让奶龙官方账号关闭了评论区 · 网易新闻/3DM游戏',
-    meta: '2026-01-15 · 「大笑奶龙」本体（季洪行 AI 变体）、笑声音源（八级哥 × 老水牛变声器）、官方关评论事件',
-    url: 'https://www.163.com/dy/article/KJA7J2UR0526D8LR.html',
-  },
-]
-
-function openVideo(v: VideoItem) {
-  window.open(v.url, '_blank', 'noopener')
+function closeLightbox() {
+  lightbox.value = null
 }
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeLightbox()
+}
+
+watch(lightbox, (value) => {
+  document.body.style.overflow = value ? 'hidden' : ''
+})
+
+onMounted(() => {
+  const sections = chapters
+    .map((chapter) => document.getElementById(chapter.id))
+    .filter((el): el is HTMLElement => el !== null)
+
+  observer = new IntersectionObserver(
+    (entries) => {
+      const visible = entries.filter((entry) => entry.isIntersecting)
+      if (!visible.length) return
+      visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
+      activeChapter.value = visible[0]!.target.id
+    },
+    { rootMargin: '-18% 0px -72% 0px', threshold: 0 },
+  )
+  sections.forEach((section) => observer!.observe(section))
+
+  window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('keydown', onKeydown)
+  onScroll()
+})
+
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
+})
+
+/* ------------------------------------------------------------------
+   视频档案馆：一次只挂一个 iframe，省流量
+------------------------------------------------------------------- */
+const videoSources = sources.filter((source) => source.kind === 'video')
+const activeVideo = ref('V1')
+const activeVideoData = computed(
+  () => videoSources.find((source) => source.id === activeVideo.value) ?? videoSources[0]!,
+)
+const activeBvid = computed(() => activeVideoData.value.url.match(/BV[0-9A-Za-z]+/)?.[0] ?? '')
+const embedUrl = computed(
+  () =>
+    'https://player.bilibili.com/player.html?bvid=' +
+    activeBvid.value +
+    '&page=1&high_quality=1&danmaku=0&autoplay=0',
+)
+
+/* ------------------------------------------------------------------
+   参考资料分组
+------------------------------------------------------------------- */
+const sourceGroups = computed(() => {
+  const order: SourceKind[] = ['wiki', 'media', 'video', 'platform', 'community']
+  return order
+    .map((kind) => ({
+      kind,
+      label: sourceKindLabel[kind],
+      items: sources.filter((source) => source.kind === kind),
+    }))
+    .filter((group) => group.items.length > 0)
+})
+
+const ticker = [
+  '奶蛙不是奶龙',
+  '先有事故，后有神',
+  '奶蛙之母：纲手[百豪]',
+  '2024.10.02 · 星野',
+  '请勿打扰原作者',
+  '旧龙已死，新蛙当立',
+]
+const marqueeItems = [...ticker, ...ticker]
 </script>
 
 <template>
-  <div class="n-container max-w-4xl py-10 sm:py-14">
-    <!-- ===== Hero ===== -->
-    <header class="mb-12 border-b border-line pb-10">
-      <p class="eyebrow mb-4 flex items-center justify-center gap-2"><span class="h-1.5 w-1.5 rounded-full bg-accent" /> Naiwa Archive · 考据专题</p>
-      <div class="flex items-center gap-3 mb-4">
-        <img src="/logo.png" alt="奶龙" class="w-14 h-14 rounded-full object-cover shadow" />
-        <h1 class="font-display text-[42px] leading-none text-ink sm:text-[54px]">从奶龙到奶蛙</h1>
-        <img src="/story/naiwa.jpg" alt="奶蛙" class="w-14 h-14 rounded-full object-cover shadow" />
-      </div>
-      <p class="max-w-2xl text-pretty text-[15px] leading-relaxed text-ink-2">
-        一个国民级 IP 在 AI 时代被重新发明的全过程 ——
-        从 <strong>2020 年诞生的黄色小恐龙</strong>，到
-        <strong>2024 年 AI 畸变出「奶蛙」</strong>，再到它席卷抽象互联网的
-        <strong>奶蛙宇宙</strong>。本文所有事实均附来源索引，<span class="text-accent font-medium">有理有据</span>。
-      </p>
-      <div class="flex flex-wrap gap-2 mt-6 text-xs">
-        <span class="px-3 py-1 rounded-full bg-butter/30 text-ink">奶龙：子供向国民 IP</span>
-        <span class="px-3 py-1 rounded-full bg-butter/20 text-ink">2023-2024：被抽象解构</span>
-        <span class="px-3 py-1 rounded-full bg-jade/10 text-jade">2024-2026：奶蛙宇宙</span>
-      </div>
-    </header>
+  <div class="relative">
+    <!-- ============================== HERO ============================== -->
+    <section class="relative overflow-hidden border-b border-line">
+      <div class="pointer-events-none absolute inset-0 dot-field opacity-[0.32]" />
+      <div class="pointer-events-none absolute -right-40 -top-44 h-[560px] w-[560px] rounded-full bg-butter/25 blur-3xl" />
+      <div class="pointer-events-none absolute -left-44 bottom-0 h-[420px] w-[420px] rounded-full bg-accent/10 blur-3xl" />
+      <span class="pointer-events-none absolute -right-[6%] top-[6%] select-none font-display text-[46vw] leading-none text-ink/[0.035] sm:text-[34vw] lg:text-[26rem]" aria-hidden="true">蛙</span>
 
-    <!-- ===== 目录 ===== -->
-    <nav class="rounded-[24px] border border-line bg-surface p-5 mb-10">
-      <h2 class="text-sm font-bold text-ink-2 mb-3">📑 本页目录</h2>
-      <div class="flex flex-wrap gap-2 text-sm">
-        <a href="#c1" class="px-3 py-1.5 rounded-2xl bg-paper-deep hover:bg-surface-2 text-ink-2 no-underline transition-colors">一、奶龙的诞生与走红（2020-2024）</a>
-        <a href="#c2" class="px-3 py-1.5 rounded-2xl bg-paper-deep hover:bg-surface-2 text-ink-2 no-underline transition-colors">二、奶龙的「被解构」时代</a>
-        <a href="#c3" class="px-3 py-1.5 rounded-2xl bg-paper-deep hover:bg-surface-2 text-ink-2 no-underline transition-colors">三、奶蛙的诞生（2024）</a>
-        <a href="#c4" class="px-3 py-1.5 rounded-2xl bg-paper-deep hover:bg-surface-2 text-ink-2 no-underline transition-colors">四、奶蛙宇宙的爆发（2025-2026）</a>
-        <a href="#c5" class="px-3 py-1.5 rounded-2xl bg-paper-deep hover:bg-surface-2 text-ink-2 no-underline transition-colors">五、黄色三幻神</a>
-        <a href="#timeline" class="px-3 py-1.5 rounded-2xl bg-paper-deep hover:bg-surface-2 text-ink-2 no-underline transition-colors">📅 完整时间线</a>
-        <a href="#videos" class="px-3 py-1.5 rounded-2xl bg-paper-deep hover:bg-surface-2 text-ink-2 no-underline transition-colors">🎬 视频档案馆</a>
-        <a href="#refs" class="px-3 py-1.5 rounded-2xl bg-paper-deep hover:bg-surface-2 text-ink-2 no-underline transition-colors">📚 参考资料</a>
+      <div class="n-container relative grid gap-10 pb-12 pt-10 sm:pt-14 lg:grid-cols-[1.16fr_0.84fr] lg:items-end lg:gap-12 lg:pb-16 lg:pt-16">
+        <div class="animate-fade-up">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="inline-flex items-center gap-1.5 rounded-full border border-ink/15 bg-butter px-3 py-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-[#181510]">
+              <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+              Naiwa Archive · 非官方考据
+            </span>
+            <span class="n-tag !py-1.5">更新于 2026-10-31</span>
+            <span class="n-tag !py-1.5">28 条时间线</span>
+          </div>
+
+          <h1 class="mt-5 display text-[66px] leading-[0.84] text-ink sm:text-[92px] lg:text-[106px]">
+            奶蛙<span class="relative text-accent">史<span class="absolute -right-7 top-0 rotate-12 text-[18px] text-butter">✳</span></span>
+          </h1>
+          <p class="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span class="font-display text-[20px] text-ink-2">又名「奶娃史」</span>
+            <span class="font-mono text-[9px] uppercase tracking-[0.18em] text-muted">A brief history of an AI accident</span>
+          </p>
+
+          <p class="mt-5 max-w-[38rem] text-[15px] leading-[1.9] text-ink-2">
+            2024 年 10 月 2 日，一位网名<strong class="text-ink">「纲手[百豪]」</strong>的用户在 AI 社交 App「星野」里，
+            给一只叫奶龙的黄色小龙建了个智能体。TA 给这个智能体配了一张背景图，用平台内置的模型生成。
+            模型把龙画成了蛙。两年后，这只蛙被近百所高校的大学生搬来搬去，
+            被做成表情包、名画、鬼畜视频和微信小游戏——
+            <strong class="font-semibold text-ink">而它的作者，至今没有公开认领它。</strong>
+          </p>
+
+          <div class="mt-5 flex flex-wrap items-center gap-2.5">
+            <a href="#s00" class="n-btn n-btn-primary n-btn-lg no-underline">
+              30 秒速通 <AppIcon name="arrow-down" :size="16" />
+            </a>
+            <a href="#s05" class="n-btn n-btn-outline n-btn-lg no-underline">
+              <AppIcon name="clock" :size="16" /> 看完整时间线
+            </a>
+            <a href="#refs" class="inline-flex items-center gap-1.5 px-2 text-[12px] font-semibold text-ink-2 no-underline transition hover:text-accent">
+              直达参考资料 <AppIcon name="arrow-up-right" :size="13" />
+            </a>
+          </div>
+
+          <div class="mt-4 inline-flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-2xl border border-accent/30 bg-accent/[0.06] px-3.5 py-2 text-[11px] leading-relaxed">
+            <span class="font-mono text-[8px] uppercase tracking-[0.16em] text-accent">Origin · 起源父母</span>
+            <span class="text-muted">母</span><strong class="text-ink">纲手[百豪]</strong>
+            <span class="text-muted/50">×</span>
+            <span class="text-muted">母本</span><strong class="text-ink">奶龙</strong>
+            <span class="text-muted/50">×</span>
+            <span class="text-muted">助产士</span><strong class="text-ink">星野 AI</strong>
+            <span class="text-muted/60">— 没有父亲</span>
+          </div>
+
+          <div class="mt-5 flex flex-wrap gap-2 text-[11px]">
+            <span class="rounded-full border border-line bg-surface px-3 py-1.5">起源 <b class="font-mono">2024-10-02</b></span>
+            <span class="rounded-full border border-line bg-surface px-3 py-1.5">类型 <b>AI 亚种 / 无官方版权</b></span>
+            <span class="rounded-full border border-line bg-surface px-3 py-1.5">核心动作 <b>捧腹大笑</b></span>
+            <span class="rounded-full border border-line bg-surface px-3 py-1.5">状态 <b class="text-accent">仍在更新</b></span>
+          </div>
+
+          <dl class="mt-9 grid max-w-xl grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-5 sm:grid-cols-4">
+            <div v-for="stat in heroStats" :key="stat.label">
+              <dt class="font-display text-[22px] leading-none tabular text-ink">{{ stat.value }}</dt>
+              <dd class="mt-1 font-mono text-[8px] uppercase tracking-[0.14em] text-muted">{{ stat.label }} · {{ stat.note }}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- 标本卡 -->
+        <div class="relative mx-auto w-full max-w-[420px]">
+          <div class="absolute inset-x-7 top-7 h-full rotate-[4deg] rounded-[30px] border border-ink/15 bg-jade/15" />
+          <div class="absolute inset-x-4 top-3 h-full rotate-[-3deg] rounded-[30px] border border-ink/15 bg-accent/10" />
+
+          <div class="tape relative rotate-[-1deg] rounded-[26px] border border-ink/25 bg-surface p-3 pb-4 shadow-[8px_10px_0_0_rgba(24,21,16,.12)]">
+            <div class="flex items-center justify-between px-1 pb-2">
+              <span class="font-mono text-[8px] uppercase tracking-[0.18em] text-muted">Specimen No. 001</span>
+              <span class="font-mono text-[8px] text-muted">2024.10.02</span>
+            </div>
+            <div class="rounded-[20px] border border-line/70 bg-butter/20 p-2">
+              <NaiwaFace />
+            </div>
+            <p class="mt-2 px-1 text-[10px] leading-relaxed text-muted">
+              它不是官方角色，没有版权方，也没有一句台词。
+              <span class="text-ink-2">它唯一会做的事，是在你盯久了之后，突然笑起来。</span>
+            </p>
+          </div>
+
+          <div class="absolute -left-5 top-28 rotate-[-8deg] rounded-md border-2 border-accent bg-paper px-2.5 py-1 font-mono text-[9px] tracking-[0.1em] text-accent shadow-sm">
+            来源已确认 · 2026.08
+          </div>
+        </div>
+      </div>
+
+      <!-- ticker -->
+      <div class="overflow-hidden border-t border-ink bg-ink py-2 text-paper">
+        <div class="flex w-max animate-marquee items-center gap-7 whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.2em]">
+          <span v-for="(item, index) in marqueeItems" :key="index" class="flex items-center gap-7">
+            {{ item }} <span class="text-butter">✳</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== CHAPTER NAV ============================== -->
+    <nav class="sticky top-[76px] z-30 border-b border-line bg-paper/90 backdrop-blur-xl" aria-label="章节导航">
+      <div class="n-container flex gap-1 overflow-x-auto py-2 no-scrollbar">
+        <a
+          v-for="chapter in chapters"
+          :key="chapter.id"
+          :href="'#' + chapter.id"
+          class="shrink-0 rounded-full px-3 py-1.5 font-mono text-[10px] tracking-[0.04em] no-underline transition"
+          :class="activeChapter === chapter.id ? 'bg-ink text-paper' : 'text-muted hover:bg-ink/[0.06] hover:text-ink'"
+        >
+          <span class="mr-1 opacity-55">{{ chapter.no }}</span>{{ chapter.short }}
+        </a>
+      </div>
+      <div class="h-0.5 bg-line/60" aria-hidden="true">
+        <div class="h-full origin-left bg-accent" :style="{ transform: 'scaleX(' + progress + ')' }" />
       </div>
     </nav>
 
-    <!-- ===== 第一章 ===== -->
-    <section id="c1" class="rounded-[24px] border border-line bg-surface p-6 md:p-8 mb-10 scroll-mt-24">
-      <h2 class="font-display text-[28px] leading-tight text-ink mb-2">一、奶龙的诞生与走红（2020-2024）</h2>
-      <p class="text-sm text-muted mb-6">资料来源：[1] 百度百科</p>
+    <main>
+      <!-- ============================== 00 速通 ============================== -->
+      <section id="s00" class="n-container scroll-mt-36 py-12 sm:py-16">
+        <StorySectionHead
+          no="00"
+          title="30 秒速通"
+          kicker="Before the rabbit hole"
+          lede="如果你只在群聊里见过这个黄色胖子，先记住三件事。剩下的，下面慢慢考古。"
+        />
 
-      <p class="text-ink-2 leading-relaxed mb-4">
-        奶龙是 <strong>第七印象文化传媒（深圳）有限公司</strong> 旗下的动画短片创作者/IP：全身黄色、圆脑袋、大肚皮的可爱幼龙形象，最早于
-        <strong>2020 年 1 月 22 日</strong>在抖音开始发布作品。它以 1 分钟以内的单元剧短视频为主，定位是 10 岁以下的子供向动画，靠短视频的「奶头乐」属性大量借用网络流行梗 [[1]][[2]]。
-      </p>
+        <div class="grid gap-3 md:grid-cols-3">
+          <article class="relative overflow-hidden rounded-[22px] border border-line bg-surface p-5">
+            <span class="absolute -right-2 -top-4 font-display text-[86px] leading-none text-ink/[0.05]">01</span>
+            <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-jade">The original</p>
+            <h3 class="mt-2 font-display text-[26px] leading-none text-ink">奶龙是正主</h3>
+            <p class="mt-3 text-[13px] leading-relaxed text-ink-2">
+              2020 年 1 月 22 日在抖音出道，黄色圆头、绿色大眼、短手短脚的子供向幼龙。
+              官方还在营业，也还在维护自己的形象。
+            </p>
+            <p class="mt-3 font-mono text-[8px] uppercase tracking-[0.14em] text-muted">来源 S1 / S2</p>
+          </article>
 
-      <div class="grid md:grid-cols-2 gap-4 mb-6">
-        <figure class="overflow-hidden rounded-2xl bg-surface-2">
-          <img src="/story/nailong-anime.jpg" alt="奶龙动画剧照" class="w-full object-cover" loading="lazy" />
-          <figcaption class="text-xs text-muted p-2">奶龙动画剧照（图源：澎湃新闻·骨朵网络影视）[2]</figcaption>
-        </figure>
-        <figure class="overflow-hidden rounded-2xl bg-surface-2">
-          <img src="/story/nailong-ip.jpg" alt="奶龙 IP 形象与经典动画联动" class="w-full object-cover" loading="lazy" />
-          <figcaption class="text-xs text-muted p-2">奶龙 IP 形象（图源：澎湃新闻·骨朵网络影视）[2]</figcaption>
-        </figure>
-      </div>
+          <article class="relative overflow-hidden rounded-[22px] border border-ink/25 bg-butter/20 p-5">
+            <span class="absolute -right-2 -top-4 font-display text-[86px] leading-none text-ink/[0.06]">02</span>
+            <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-accent">The accident</p>
+            <h3 class="mt-2 font-display text-[26px] leading-none text-ink">奶蛙是 AI 亚种</h3>
+            <p class="mt-3 text-[13px] leading-relaxed text-ink-2">
+              2024 年 10 月 2 日，星野用户「纲手[百豪]」给奶龙智能体生成背景图，模型把龙画成了蛙。
+              没有官方设定，没有版权方。
+            </p>
+            <p class="mt-3 font-mono text-[8px] uppercase tracking-[0.14em] text-muted">来源 S3 / S4 / S5</p>
+          </article>
 
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <div class="rounded-2xl bg-butter/15 p-4 text-center">
-          <div class="font-display text-[28px] leading-tight text-ink text-accent">419</div>
-          <div class="text-xs text-muted mt-1">抖音累计作品（截至 2026-03）[1]</div>
+          <article class="relative overflow-hidden rounded-[22px] border border-line bg-surface p-5">
+            <span class="absolute -right-2 -top-4 font-display text-[86px] leading-none text-ink/[0.05]">03</span>
+            <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-rose">The laugh</p>
+            <h3 class="mt-2 font-display text-[26px] leading-none text-ink">它靠“笑”传播</h3>
+            <p class="mt-3 text-[13px] leading-relaxed text-ink-2">
+              黄色梨形身体 + 捧腹大笑 + 八级哥的卡痰笑声。任何严肃场景，只要结尾一起笑，就完成了降维。
+            </p>
+            <p class="mt-3 font-mono text-[8px] uppercase tracking-[0.14em] text-muted">来源 S5 / S6 / S12</p>
+          </article>
         </div>
-        <div class="rounded-2xl bg-butter/15 p-4 text-center">
-          <div class="font-display text-[28px] leading-tight text-ink text-accent">2357.5 万</div>
-          <div class="text-xs text-muted mt-1">抖音粉丝（截至 2026-03）[1]</div>
-        </div>
-        <div class="rounded-2xl bg-butter/15 p-4 text-center">
-          <div class="font-display text-[28px] leading-tight text-ink text-accent">3791 万+</div>
-          <div class="text-xs text-muted mt-1">全网粉丝量 [1]</div>
-        </div>
-        <div class="rounded-2xl bg-butter/15 p-4 text-center">
-          <div class="font-display text-[28px] leading-tight text-ink text-accent">3.1 亿</div>
-          <div class="text-xs text-muted mt-1">全网获赞 [1]</div>
-        </div>
-      </div>
 
-      <h3 class="font-display text-xl text-ink mb-3">爆火逻辑：低龄 IP 的「黑红也是红」[[2]]</h3>
-      <ol class="list-decimal list-inside space-y-2 text-ink-2 leading-relaxed">
-        <li><strong>先在小学生群体爆火</strong> —— 孩子单纯觉得搞笑，且低幼内容可选范围小、用户粘性极强。</li>
-        <li><strong>成年人开始反感「低智」</strong> —— 于是对着奶龙进行抽象解构，炮制大量嘲讽向二创视频。</li>
-        <li><strong>官方索性玩梗自嘲</strong> —— 黑红也是红，奶龙团队接住流量化为己用，反而在嘲讽声中走向顶流。</li>
-      </ol>
-      <p class="text-ink-2 leading-relaxed mt-4">
-        破圈之后，奶龙与<strong>麦当劳、名创优品、泡泡玛特</strong>等消费品牌，以及<strong>《和平精英》《梦幻西游》</strong>等手游联名；2024 年国庆在深圳前海石公园树起 20 米高气膜巨型奶龙，7 天内相关话题增长超 300 万；2025 年五一又落地贵阳云顶暮曙公园 22 米高「全国最大奶龙」与唐山皮影乐园主题巡游 [[2]]。
-      </p>
-    </section>
-
-    <!-- ===== 第二章 ===== -->
-    <section id="c2" class="rounded-[24px] border border-line bg-surface p-6 md:p-8 mb-10 scroll-mt-24">
-      <h2 class="font-display text-[28px] leading-tight text-ink mb-2">二、奶龙的「被解构」时代（2023-2024）</h2>
-      <p class="text-sm text-muted mb-6">资料来源：[2][6]</p>
-
-      <p class="text-ink-2 leading-relaxed mb-4">
-        当一个子供向 IP 在互联网上无处不在时，它的「可爱」很快会成为解构素材。澎湃的分析指出，奶龙大量视频<strong>连完整的故事都没有、只是段子</strong>，这让很多年轻人反感其「无所不在地入侵」[[2]]。
-      </p>
-      <p class="text-ink-2 leading-relaxed mb-4">
-        于是出现了「<strong>十年擦边无人问，cos 奶龙天下知</strong>」的现象级二创：真人套上黄色奶龙玩偶服出镜，比正经内容更容易获得流量 [[6]]。这个时期，奶龙的形象开始脱离官方设定，成为互联网通用的「黄色搞笑素材」——这为奶蛙的诞生埋下了土壤：<strong>当角色的脸可以被随意替换，为什么不能换成青蛙？</strong>
-      </p>
-
-      <figure class="overflow-hidden rounded-2xl bg-surface-2 mb-4 max-w-sm">
-        <img src="/story/nailong-cos.jpg" alt="cos 奶龙吊图合集" class="w-full object-cover" loading="lazy" />
-        <figcaption class="text-xs text-muted p-2">「cos 奶龙」合集画面（图源：B站二创视频封面）[6]</figcaption>
-      </figure>
-
-      <blockquote class="border-l-4 border-accent bg-butter/15 p-4 rounded-r-lg text-ink-2">
-        「奶龙这辈子可能都没法想到，自己有一天在评选唐家三少时连上桌的资格都没有，甚至于这张桌子上，还在不断涌来新客，把奶龙挤回小孩那桌。」<span class="text-xs text-muted block mt-2">—— 网易新闻/3DM游戏 [5]</span>
-      </blockquote>
-    </section>
-
-    <!-- ===== 第三章 ===== -->
-    <section id="c3" class="rounded-[24px] border border-line bg-surface p-6 md:p-8 mb-10 scroll-mt-24">
-      <h2 class="font-display text-[28px] leading-tight text-ink mb-2">三、奶蛙的诞生（2024）—— AI 时代的「克苏鲁变体」</h2>
-      <p class="text-sm text-muted mb-6">资料来源：[4] 失传媒体中文维基（来源已确认）</p>
-
-      <div class="grid md:grid-cols-2 gap-6 items-start">
-        <div class="text-ink-2 leading-relaxed space-y-4">
-          <p>
-            奶蛙并非官方角色，而是<strong>AI 二创缝合产物</strong>。据失传媒体中文维基考证：2024 年 10 月 2 日，星野 App 用户
-            <strong>「纲手[百豪]」</strong> 使用 AI 创作了一张对奶龙的恶搞图片，作为他为「奶龙」智能体（ID: <code class="bg-paper-deep px-1 rounded text-xs">zNCvQDKfXy</code>）设置的背景图 [[4]]。
-          </p>
-          <p>
-            经过 AI 渲染后，奶龙<strong>体型畸变、腹部膨大、四肢细小、头部异常肿大</strong>，加上绿色眼睛与黑色四肢，整体形似青蛙——「奶蛙」之名由此而来 [[4]]。机核的文章则形容它是「<strong>四肢黝黑，全身像黄桃罐头，头部异常肿大</strong>」的生物 [[3]]。
-          </p>
-          <p>
-            <strong>关键辨析：</strong>该源头的确认经历了反复 —— 2025 年 3 月，网友将奶蛙与抖音博主「季洪行」视频做 AI 融合，导致很长一段时间奶蛙被误认为「季洪行×奶龙」的产物；2026 年 8 月，B 站用户「雾蚀心忘症」在星野 App 中找到符合形象的智能体，维基最终将来源正式确认（另有 2024 年 8 月更早的视频出现，但水印不同、主流理论认为是后期换源）[[4]]。
-          </p>
-        </div>
-        <figure class="overflow-hidden rounded-2xl bg-surface-2">
-          <img src="/story/naiwa.jpg" alt="奶蛙经典形象" class="w-full object-cover" loading="lazy" />
-          <figcaption class="text-xs text-muted p-2">奶蛙经典形象：黄桃罐头般的身体、绿眼睛、黑四肢（图源：B站《奶蛙这张图的由来我找到了》封面）[6]</figcaption>
-        </figure>
-      </div>
-    </section>
-
-    <!-- ===== 第四章 ===== -->
-    <section id="c4" class="rounded-[24px] border border-line bg-surface p-6 md:p-8 mb-10 scroll-mt-24">
-      <h2 class="font-display text-[28px] leading-tight text-ink mb-2">四、奶蛙宇宙的爆发（2025-2026）</h2>
-      <p class="text-sm text-muted mb-6">资料来源：[3][5][7][8][9][10]</p>
-
-      <p class="text-ink-2 leading-relaxed mb-4">
-        奶蛙的二创视频绝大多数配有<strong>经过处理的直播连麦录音</strong>：结尾必有一声<strong>卡痰音大笑</strong>与动感 BGM
-        <strong>《BABY DON’T CRY》</strong>——「捧腹大笑的奶蛙」因此成为 alpha 世代抽象圈层的经典迷因 [[3]][[4]]。
-      </p>
-      <p class="text-ink-2 leading-relaxed mb-4">
-        在 AI 工具的加持下，奶蛙开始「入侵」人类文明史：它可以出现在<strong>《创造亚当》</strong>里与上帝碰手指，可以成为<strong>《梅杜萨之筏》</strong>上即将覆灭的船员，也可以化身<strong>「拿破蛙」</strong>翻越阿尔卑斯山脉，或是像<strong>普罗米修斯</strong>一样被缚于悬崖 [[3]][[10]]。机核的文章以一句话总结这场「文艺复兴」：<strong>「旧龙已死，而新蛙当立。」</strong>[[3]]
-      </p>
-
-      <div class="grid md:grid-cols-2 gap-4 mb-6">
-        <figure class="overflow-hidden rounded-2xl bg-surface-2">
-          <img src="/story/naiwa-laugh.jpg" alt="奶蛙捧腹大笑" class="w-full object-cover" loading="lazy" />
-          <figcaption class="text-xs text-muted p-2">奶蛙捧腹大笑（图源：B站《09年dv录制奶蛙捧腹大笑》封面）[8]</figcaption>
-        </figure>
-        <figure class="overflow-hidden rounded-2xl bg-surface-2">
-          <img src="/story/naiwa-squint.jpg" alt="奶蛙斜视 meme" class="w-full object-cover" loading="lazy" />
-          <figcaption class="text-xs text-muted p-2">奶蛙斜视 meme（图源：B站《【奶蛙】斜视meme》封面）[9]</figcaption>
-        </figure>
-      </div>
-
-      <div class="rounded-xl border border-jade/20 bg-jade/8 p-5">
-        <h3 class="font-bold text-jade mb-2">🎯 为什么奶蛙比奶龙更「火」？</h3>
-        <p class="text-sm text-ink-2 leading-relaxed">
-          奶蛙相对于奶龙是「更高维」的抽象符号：它<strong>统一了「丑萌」与「魔性」</strong>——既保留了奶龙的黄色辨识度，又用畸变带来天然的荒诞感；任何严肃题材（名画、历史、医学）被奶蛙替换后都会立刻降维成笑料，完美契合「不需要理解、只需要感受」的互联网玩梗逻辑 [[5]]。而从传播学看，奶龙作为「正主」被官方大量联名变现，奶蛙作为「野生的二创」反而获得了不受版权约束的再创作自由 [[2]]。
-        </p>
-      </div>
-    </section>
-
-    <!-- ===== 第五章 ===== -->
-    <section id="c5" class="rounded-[24px] border border-line bg-surface p-6 md:p-8 mb-10 scroll-mt-24">
-      <h2 class="font-display text-[28px] leading-tight text-ink mb-2">五、黄色三幻神（2026）</h2>
-      <p class="text-sm text-muted mb-6">资料来源：[5] 网易新闻/3DM游戏</p>
-
-      <p class="text-ink-2 leading-relaxed mb-4">
-        2026 年起，奶蛙与 <strong>牛来</strong>（一句话「妈——妈——」让无数人泪目的抽象新星）、<strong>美团袋鼠</strong>（「外卖越吃越少我怎么吃」的规则怪谈制造机）被网友凑成<strong>「黄色三幻神」</strong>。它们并非出自同一部作品，却都以黄色软萌外观 + 魔性言论/笑声称霸抽象宇宙 [[5]]。
-      </p>
-      <p class="text-ink-2 leading-relaxed mb-4 text-sm">
-        3DM 的评论甚至为奶蛙「封神」：<strong>「奶蛙，原为奶龙 AI 亚种，由于技能设计太过超模，不论在什么场合都能让结尾收束为众宾欢也的哈哈大笑。」</strong>[[5]]
-      </p>
-
-      <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <figure class="overflow-hidden rounded-2xl bg-surface-2">
-          <img src="/story/niulai.jpg" alt="牛来" class="w-full aspect-[4/5] object-cover" loading="lazy" />
-          <figcaption class="text-xs text-muted p-2">牛来（图源：网易新闻）[5]</figcaption>
-        </figure>
-        <figure class="overflow-hidden rounded-2xl bg-surface-2">
-          <img src="/story/kangaroo-review.jpg" alt="美团袋鼠差评梗" class="w-full aspect-[4/5] object-cover" loading="lazy" />
-          <figcaption class="text-xs text-muted p-2">美团袋鼠：外卖越吃越少（图源：网易新闻）[5]</figcaption>
-        </figure>
-        <figure class="overflow-hidden rounded-2xl bg-surface-2">
-          <img src="/story/kangaroo-audit.jpg" alt="美团袋鼠评审团" class="w-full aspect-[4/5] object-cover" loading="lazy" />
-          <figcaption class="text-xs text-muted p-2">美团袋鼠：小美评审团（图源：网易新闻）[5]</figcaption>
-        </figure>
-      </div>
-    </section>
-
-    <!-- ===== 完整时间线 ===== -->
-    <section id="timeline" class="rounded-[24px] border border-line bg-surface p-6 md:p-8 mb-10 scroll-mt-24">
-      <p class="eyebrow mb-2">Timeline</p>
-      <h2 class="font-display text-[28px] leading-tight text-ink mb-6">完整时间线</h2>
-      <div class="relative pl-6 border-l-2 border-accent/30 space-y-6">
-        <div v-for="(t, i) in timeline" :key="i" class="relative">
-          <span class="absolute -left-[31px] top-1 w-3 h-3 rounded-full bg-accent ring-4 ring-surface"></span>
-          <div class="text-xs font-mono text-accent mb-1">{{ t.date }} <span class="text-muted ml-1">{{ t.src }}</span></div>
-          <div class="font-bold text-ink mb-1">{{ t.title }}</div>
-          <div class="text-sm text-ink-2 leading-relaxed">{{ t.desc }}</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== 视频档案馆 ===== -->
-    <section id="videos" class="rounded-[24px] border border-line bg-surface p-6 md:p-8 mb-10 scroll-mt-24">
-      <h2 class="font-display text-[28px] leading-tight text-ink mb-2">🎬 视频档案馆</h2>
-      <p class="text-sm text-muted mb-6">原始视频可能被下架或换源，若播放器无法加载，请点击「在源站打开」</p>
-
-      <div class="space-y-8">
-        <article v-for="(v, i) in videos" :key="i" class="overflow-hidden rounded-[24px] border border-line">
-          <div class="grid md:grid-cols-2">
-            <!-- 封面 / 播放器 -->
-            <div class="relative aspect-video bg-black">
-              <iframe
-                v-if="v.bvid"
-                :src="`https://player.bilibili.com/player.html?bvid=${v.bvid}&page=1&high_quality=1&danmaku=0&autoplay=0`"
-                class="w-full h-full"
-                scrolling="no"
-                frameborder="no"
-                allowfullscreen="true"
-                loading="lazy"
-                :title="v.title"
-              ></iframe>
-              <a v-else :href="v.url" target="_blank" rel="noopener" class="block w-full h-full">
-                <img :src="v.cover" :alt="v.title" class="w-full h-full object-cover" loading="lazy" />
-                <span class="absolute inset-0 flex items-center justify-center text-white text-5xl opacity-80">▶</span>
-              </a>
+        <!-- 形变装置 -->
+        <div class="mt-8">
+          <div class="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <p class="eyebrow mb-1">Interactive · 01</p>
+              <h3 class="font-display text-[24px] leading-none text-ink">拖动，重演一次 AI 事故</h3>
             </div>
-            <!-- 解释区 -->
-            <div class="p-5 flex flex-col">
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-xs px-2 py-0.5 rounded-full bg-jade/10 text-jade">{{ v.tag }}</span>
-                <span class="text-xs text-muted">{{ v.meta }}</span>
+            <p class="max-w-xs text-[11px] leading-relaxed text-muted">左边是官方奶龙，右边是野生奶蛙。分界线由你控制。</p>
+          </div>
+          <StoryMorph />
+        </div>
+
+        <!-- 一眼分辨 -->
+        <div class="mt-10">
+          <div class="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <p class="eyebrow mb-1">Field guide</p>
+              <h3 class="font-display text-[24px] leading-none text-ink">一眼分辨：龙还是蛙</h3>
+            </div>
+            <p class="hidden font-mono text-[9px] uppercase tracking-[0.14em] text-muted sm:block">Look at the eyes first</p>
+          </div>
+
+          <div class="overflow-x-auto rounded-[22px] border border-line bg-surface">
+            <table class="w-full min-w-[560px] border-collapse text-left">
+              <thead>
+                <tr class="border-b border-line bg-paper-deep/50">
+                  <th class="w-[18%] px-4 py-3 font-mono text-[9px] uppercase tracking-[0.14em] text-muted">对比项</th>
+                  <th class="w-[41%] px-4 py-3">
+                    <span class="flex items-center gap-2">
+                      <img src="/story/nailong-ip.jpg" alt="" class="h-7 w-7 rounded-full object-cover" />
+                      <span class="font-display text-[18px] text-ink">奶龙</span>
+                      <span class="font-mono text-[8px] text-jade">官方</span>
+                    </span>
+                  </th>
+                  <th class="w-[41%] px-4 py-3">
+                    <span class="flex items-center gap-2">
+                      <img src="/story/naiwa.jpg" alt="" class="h-7 w-7 rounded-full object-cover" />
+                      <span class="font-display text-[18px] text-ink">奶蛙</span>
+                      <span class="font-mono text-[8px] text-accent">野生</span>
+                    </span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="text-[12px] leading-relaxed text-ink-2">
+                <tr class="border-b border-line/70">
+                  <td class="px-4 py-2.5 font-mono text-[9px] text-muted">出身</td>
+                  <td class="px-4 py-2.5">第七印象 2020 年原创 IP</td>
+                  <td class="px-4 py-2.5">星野 AI 生成图，2024-10-02</td>
+                </tr>
+                <tr class="border-b border-line/70">
+                  <td class="px-4 py-2.5 font-mono text-[9px] text-muted">眼睛</td>
+                  <td class="px-4 py-2.5">绿色大眼，黑瞳大而圆</td>
+                  <td class="px-4 py-2.5">浅绿环状眼白，小黑瞳，外凸</td>
+                </tr>
+                <tr class="border-b border-line/70">
+                  <td class="px-4 py-2.5 font-mono text-[9px] text-muted">身体</td>
+                  <td class="px-4 py-2.5">圆头胖身，短手短脚</td>
+                  <td class="px-4 py-2.5">梨形，无颈，大肚皮，深色长手脚</td>
+                </tr>
+                <tr class="border-b border-line/70">
+                  <td class="px-4 py-2.5 font-mono text-[9px] text-muted">气质</td>
+                  <td class="px-4 py-2.5">可爱、设定完整、面向低龄</td>
+                  <td class="px-4 py-2.5">荒诞、失控、随时要笑</td>
+                </tr>
+                <tr class="border-b border-line/70">
+                  <td class="px-4 py-2.5 font-mono text-[9px] text-muted">版权</td>
+                  <td class="px-4 py-2.5">有明确版权方</td>
+                  <td class="px-4 py-2.5 text-accent">无官方版权，网友共有</td>
+                </tr>
+                <tr>
+                  <td class="px-4 py-2.5 font-mono text-[9px] text-muted">一句话</td>
+                  <td class="px-4 py-2.5">“我是奶龙”</td>
+                  <td class="px-4 py-2.5">“先有事故，后有神”</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="mt-3 rounded-xl border border-line bg-surface-2 px-4 py-3 text-[11px] leading-relaxed text-muted">
+            <span class="font-semibold text-ink-2">顺带一提：</span>
+            奶蛙和真实存在的“牛奶蛙”（亚马逊牛奶蛙）没有关系。搜“饲养、价格、寿命”找的是它；搜“表情包、大笑、立牌”找的是奶蛙。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================== 01 前史 ============================== -->
+      <section id="s01" class="border-y border-line bg-paper-deep/40">
+        <div class="n-container scroll-mt-36 py-12 sm:py-16">
+          <StorySectionHead
+            no="01"
+            title="前史：一只黄色幼龙"
+            kicker="2020 — 2024 · The original"
+            lede="要理解奶蛙，先理解它借用了谁的身体。奶龙不是一只普通的卡通龙，它是一个被算法、联名和小学生共同推上神坛的“黄色基础设施”。"
+          />
+
+          <div class="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-10">
+            <div class="space-y-4 text-[14px] leading-[1.9] text-ink-2">
+              <p>
+                奶龙由<strong class="text-ink">第七印象文化传媒（深圳）有限公司</strong>运营，最早于
+                <strong class="text-ink">2020 年 1 月 22 日</strong>在抖音发布作品。单集多在 1 分钟以内，
+                是单元剧，定位 10 岁以下的子供向动画；为了适配短视频的节奏，里面塞满了网络流行梗。
+              </p>
+              <p>
+                它先在小学生群体里爆火：孩子觉得好笑，可选内容又少，粘性极强。随后爆款按季度出现——
+                2020 年 12 月的《好大一只变色龙！》获赞约 237 万，2021 年 1 月的《好大一条眼镜蛇！》获赞约 379.7 万。
+                2021 年 10 月，第一套官方微信表情包上线，奶龙从视频走进了聊天框。
+              </p>
+              <p>
+                2023 年和 2024 年，番剧第一、第二季相继推出，奶龙开始拥有“完整故事”。但互联网对它的使用方式，
+                早就和官方设定分道扬镳：大家要的不是剧情，是一个可以无限复用的黄色表情。
+              </p>
+              <p>
+                到 2025 年，奶龙已经是全网粉丝超 3600 万、短视频播放量破百亿的 IP；深圳前海竖起过 20 米高的气膜奶龙，
+                贵阳云顶暮曙公园又立起 22 米的“全国最大奶龙”。<span class="text-muted">（S2）</span>
+              </p>
+
+              <div class="rounded-2xl border border-line bg-surface p-4">
+                <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-muted">Why it got deconstructed</p>
+                <h4 class="mt-1 font-display text-[22px] leading-tight text-ink">为什么一个子供向 IP 会被解构？</h4>
+                <ol class="mt-3 space-y-2 text-[12px] leading-relaxed">
+                  <li class="flex gap-2"><span class="font-mono text-accent">01</span><span><strong class="text-ink">它无处不在。</strong>联名、表情包、短视频、线下气膜，成年人躲不开。</span></li>
+                  <li class="flex gap-2"><span class="font-mono text-accent">02</span><span><strong class="text-ink">它足够浅。</strong>很多视频连完整故事都没有，只是一个段子。</span></li>
+                  <li class="flex gap-2"><span class="font-mono text-accent">03</span><span><strong class="text-ink">它接住了嘲讽。</strong>官方索性玩梗自嘲，“黑红也是红”。</span></li>
+                </ol>
               </div>
-              <h3 class="text-lg font-bold text-ink mb-1">{{ v.title }}</h3>
-              <p class="text-xs text-muted mb-3">{{ v.author }}</p>
-              <p class="text-sm text-ink-2 leading-relaxed flex-1">{{ v.desc }}</p>
+            </div>
+
+            <div class="space-y-4">
+              <figure class="overflow-hidden rounded-[22px] border border-line bg-surface">
+                <button type="button" class="group relative block w-full" @click="openLightbox({ src: '/story/nailong-anime.jpg', alt: '奶龙动画剧照', caption: '奶龙动画剧照（图源：澎湃新闻 · 骨朵网络影视，S2）' })">
+                  <img src="/story/nailong-anime.jpg" alt="奶龙动画剧照：黄色幼龙与伙伴" class="w-full object-cover transition duration-700 group-hover:scale-[1.02]" loading="lazy" decoding="async" />
+                  <span class="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-full border border-white/30 bg-black/35 text-[12px] text-white opacity-0 backdrop-blur transition group-hover:opacity-100">⤢</span>
+                </button>
+                <figcaption class="px-3 py-2 text-[10px] leading-relaxed text-muted">奶龙动画剧照（图源：澎湃新闻 · 骨朵网络影视，S2）</figcaption>
+              </figure>
+
+              <figure class="overflow-hidden rounded-[22px] border border-line bg-surface">
+                <button type="button" class="group relative block w-full" @click="openLightbox({ src: '/story/nailong-ip.jpg', alt: '奶龙 IP 形象', caption: '奶龙 IP 形象与经典动画联动（图源：澎湃新闻 · 骨朵网络影视，S2）' })">
+                  <img src="/story/nailong-ip.jpg" alt="奶龙 IP 形象与经典动画联动" class="w-full object-cover transition duration-700 group-hover:scale-[1.02]" loading="lazy" decoding="async" />
+                  <span class="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-full border border-white/30 bg-black/35 text-[12px] text-white opacity-0 backdrop-blur transition group-hover:opacity-100">⤢</span>
+                </button>
+                <figcaption class="px-3 py-2 text-[10px] leading-relaxed text-muted">奶龙 IP 形象与经典动画联动（图源：澎湃新闻 · 骨朵网络影视，S2）</figcaption>
+              </figure>
+
+              <div class="grid grid-cols-3 gap-2">
+                <div class="rounded-2xl border border-line bg-surface p-3 text-center">
+                  <p class="font-display text-[23px] leading-none tabular text-ink">3600 万+</p>
+                  <p class="mt-1 font-mono text-[8px] uppercase tracking-[0.1em] text-muted">全网粉丝</p>
+                </div>
+                <div class="rounded-2xl border border-line bg-surface p-3 text-center">
+                  <p class="font-display text-[23px] leading-none tabular text-ink">百亿</p>
+                  <p class="mt-1 font-mono text-[8px] uppercase tracking-[0.1em] text-muted">短视频播放</p>
+                </div>
+                <div class="rounded-2xl border border-line bg-surface p-3 text-center">
+                  <p class="font-display text-[23px] leading-none tabular text-ink">22m</p>
+                  <p class="mt-1 font-mono text-[8px] uppercase tracking-[0.1em] text-muted">最高气膜</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <blockquote class="mt-8 max-w-3xl border-l-4 border-accent bg-surface p-5 text-[14px] leading-relaxed text-ink-2">
+            “奶龙很多视频连个完整的故事都没有，只是一个段子。这样的内容让很多家长比较担心，也有很多年轻人很反感奶龙无所不在地入侵。”
+            <span class="mt-2 block font-mono text-[9px] uppercase tracking-[0.14em] text-muted">—— 澎湃新闻 · 骨朵网络影视，2025-04-30（S2）</span>
+          </blockquote>
+
+          <p class="mt-6 max-w-3xl text-[14px] leading-[1.9] text-ink-2">
+            奶蛙不是奶龙的反面，它是奶龙的影子。当一只角色的脸可以被随意替换、身体可以被随意重绘，
+            它就只剩下一组最顽固的视觉特征：<strong class="text-ink">黄、圆、大眼、无害。</strong>
+            这组特征，正好够 AI 把它认错成一只蛙。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================== 02 起源 ============================== -->
+      <section id="s02" class="n-container scroll-mt-36 py-12 sm:py-16">
+        <StorySectionHead
+          no="02"
+          title="起源：一次 AI 事故"
+          kicker="2024-10-02 · The mother"
+          lede="现在，回答那个最关键的问题：奶蛙的“父母”是谁？答案不是季洪行，也不是奶龙官方，而是一位网名来自《火影忍者》的普通用户。"
+        />
+
+        <div class="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:gap-10">
+          <div class="space-y-4 text-[14px] leading-[1.9] text-ink-2">
+            <p>
+              2024 年 10 月 2 日，星野 App 用户
+              <strong class="text-ink">「纲手[百豪]」</strong>
+              创建了一个名为“奶龙”的 AI 智能体（ID：
+              <code class="rounded bg-paper-deep px-1.5 py-0.5 font-mono text-[11px] text-ink">zNCvQDKfXy</code>）。
+              TA 用平台内置的图像模型，为这个智能体生成了一张奶龙的背景图。
+            </p>
+            <p>
+              模型没有画出一只龙。它把奶龙圆润的身体、绿色的大眼睛和奶油色的肚皮重新排列，
+              生成了一只<strong class="text-ink">梨形、无颈、凸眼、四肢细长</strong>的黄色生物。
+              因为它太像青蛙，网友给它取名“奶蛙”。
+            </p>
+            <p class="rounded-xl border border-line bg-surface-2 px-3.5 py-3 text-[12px] leading-relaxed">
+              <strong class="text-ink">需要保留的余地：</strong>
+              智能体已经无法访问，因此无法百分百确认这张图是星野直接生成，还是其他 AI 生成后上传。
+              “星野智能体背景图”是目前证据最强的解释，但不是唯一可能的解释。
+            </p>
+            <p>
+              目前能确认的是：TA 是星野用户，不是奶龙官方，也没有以作者身份公开出现过。TA 的网名看起来取自《火影忍者》里的纲手与“百豪之印”，
+              这也是网友判断 TA 是火影爱好者的线索。据手谈姬报道，2025 年 TA 还在评论区为“自己的奶龙被更多人看到”而高兴；
+              2026 年，当全网找到 TA 时，智能体已经无法搜索/分享、评论区关闭；维基编者提醒，TA 可能对该作品不感兴趣，请避免打扰。
+            </p>
+            <p>
+              网友把 TA 叫作<strong class="text-ink">“奶蛙之母”</strong>，后来简称“蛙母”。这个称呼把一次生成事故写成了“生育”：
+              创作者是母亲，奶龙是胞兄，奶蛙是被遗弃的孩子。它很适合做二创，但也把一位普通人推到了聚光灯下。
+            </p>
+          </div>
+
+          <figure class="overflow-hidden rounded-[24px] border border-line bg-surface">
+            <button type="button" class="group relative block w-full" @click="openLightbox({ src: '/story/naiwa.jpg', alt: '奶蛙经典形象', caption: '奶蛙经典形象：黄色梨形身体、浅绿环状眼白、奶油色肚皮。' })">
+              <img src="/story/naiwa.jpg" alt="奶蛙经典形象：黄色梨形身体、绿色环状眼睛、奶油色肚皮" class="aspect-[4/3] w-full object-cover transition duration-700 group-hover:scale-[1.02]" loading="lazy" decoding="async" />
+              <span class="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-full border border-white/30 bg-black/35 text-[12px] text-white opacity-0 backdrop-blur transition group-hover:opacity-100">⤢</span>
+            </button>
+            <figcaption class="px-4 py-3 text-[10px] leading-relaxed text-muted">
+              奶蛙的原图已难以直接获取；这是公开传播中最常见的版本。它的“正确打开方式”不是设计稿，而是一次误读。
+            </figcaption>
+          </figure>
+        </div>
+
+        <!-- 一句话版本 -->
+        <div class="mt-8 overflow-hidden rounded-[22px] border border-ink/20 bg-butter/15">
+          <div class="flex items-center justify-between gap-3 border-b border-ink/10 px-5 py-3">
+            <p class="font-mono text-[9px] uppercase tracking-[0.18em] text-ink-2">The one-paragraph version</p>
+            <span class="rotate-[-3deg] rounded border border-accent/50 px-2 py-0.5 font-mono text-[8px] tracking-[0.1em] text-accent">没有父亲</span>
+          </div>
+          <div class="grid gap-3 px-5 py-4 sm:grid-cols-3">
+            <div>
+              <p class="font-mono text-[8px] uppercase tracking-[0.14em] text-muted">母 / 生成者</p>
+              <p class="mt-1 font-display text-[22px] leading-none text-ink">纲手[百豪]</p>
+              <p class="mt-1 text-[11px] leading-relaxed text-ink-2">按下生成键的人。星野用户，不是官方。</p>
+            </div>
+            <div>
+              <p class="font-mono text-[8px] uppercase tracking-[0.14em] text-muted">母本 / 胞兄</p>
+              <p class="mt-1 font-display text-[22px] leading-none text-ink">奶龙</p>
+              <p class="mt-1 text-[11px] leading-relaxed text-ink-2">被误读的原图。官方 IP，还在营业。</p>
+            </div>
+            <div>
+              <p class="font-mono text-[8px] uppercase tracking-[0.14em] text-muted">助产士 / 误差</p>
+              <p class="mt-1 font-display text-[22px] leading-none text-ink">星野 AI</p>
+              <p class="mt-1 text-[11px] leading-relaxed text-ink-2">低精度模型。把“龙”读成“蛙”的那一下。</p>
+            </div>
+          </div>
+          <p class="border-t border-ink/10 px-5 py-3 text-[11px] leading-relaxed text-ink-2">
+            <strong class="text-ink">父：没有。</strong>
+            季洪行是“大笑奶龙”的中之人，和奶蛙的生成链无关；2025-03-07 的 AI 融合造成了长期误认，2026-08 已被证伪。
+          </p>
+        </div>
+
+        <!-- 血统证明 -->
+        <div class="mt-8">
+          <StoryFamily />
+        </div>
+
+        <!-- 三个误会 -->
+        <div class="mt-10">
+          <div class="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <p class="eyebrow mb-1">Fact check</p>
+              <h3 class="font-display text-[24px] leading-none text-ink">三个最常见的误会</h3>
+            </div>
+            <span class="hidden font-mono text-[9px] uppercase tracking-[0.14em] text-muted sm:block">Read before arguing</span>
+          </div>
+          <div class="grid gap-3 md:grid-cols-3">
+            <div class="rounded-[20px] border border-rose/25 bg-rose/5 p-4">
+              <p class="font-mono text-[9px] text-rose">误会 01</p>
+              <p class="mt-1.5 text-[13px] font-semibold text-ink">“奶蛙是奶龙官方的新角色。”</p>
+              <p class="mt-2 text-[11px] leading-relaxed text-muted">不是。奶龙官方从未发布过奶蛙；它是一个用户生成的 AI 图，后来被全网二创。</p>
+            </div>
+            <div class="rounded-[20px] border border-rose/25 bg-rose/5 p-4">
+              <p class="font-mono text-[9px] text-rose">误会 02</p>
+              <p class="mt-1.5 text-[13px] font-semibold text-ink">“奶蛙是季洪行变的。”</p>
+              <p class="mt-2 text-[11px] leading-relaxed text-muted">不是。季洪行对应的是“大笑奶龙”。2025-03-07 的融合造成了误认，2026-08-04 已被星野智能体证据纠正。</p>
+            </div>
+            <div class="rounded-[20px] border border-rose/25 bg-rose/5 p-4">
+              <p class="font-mono text-[9px] text-rose">误会 03</p>
+              <p class="mt-1.5 text-[13px] font-semibold text-ink">“奶蛙是某个画师画的。”</p>
+              <p class="mt-2 text-[11px] leading-relaxed text-muted">不是。它是低精度模型的生成结果。没有原画师，没有设计稿，也没有一张“官方设定图”。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 命名 -->
+        <div class="mt-8 rounded-[22px] border border-line bg-surface p-5 sm:p-6">
+          <div class="grid gap-5 md:grid-cols-[0.9fr_1.1fr] md:items-center">
+            <div>
+              <p class="font-mono text-[9px] uppercase tracking-[0.18em] text-muted">Naming</p>
+              <h3 class="mt-1 font-display text-[30px] leading-none text-ink">为什么是“蛙”，不是“娃”</h3>
+            </div>
+            <div class="space-y-2 text-[12px] leading-relaxed text-ink-2">
+              <p>
+                因为它像青蛙，所以叫“奶蛙”。但输入法里“奶蛙”经常被联想成“奶娃”，于是两个写法一起流传。
+                机核的作者甚至写道：“奶蛙却总是只能联想打字奶娃，这就是神的不可目视吗。”
+              </p>
+              <p>
+                本页把<strong class="text-ink">“奶蛙”</strong>作为正式称呼，把<strong class="text-ink">“奶娃”</strong>作为别名；
+                你看到“大奶蛙”“蛙母”“奶蛙之母”，说的都是同一件事。
+              </p>
+            </div>
+          </div>
+          <div class="mt-4 flex flex-wrap gap-2">
+            <span class="rounded-full border border-line bg-paper px-3 py-1 text-[11px] text-ink-2">奶蛙 <span class="font-mono text-[9px] text-muted">正式</span></span>
+            <span class="rounded-full border border-line bg-paper px-3 py-1 text-[11px] text-ink-2">奶娃 <span class="font-mono text-[9px] text-muted">别名 / 输入法</span></span>
+            <span class="rounded-full border border-line bg-paper px-3 py-1 text-[11px] text-ink-2">大奶蛙 <span class="font-mono text-[9px] text-muted">媒体用法</span></span>
+            <span class="rounded-full border border-line bg-paper px-3 py-1 text-[11px] text-ink-2">蛙母 / 奶蛙之母 <span class="font-mono text-[9px] text-muted">指创作者</span></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== 03 潜伏 ============================== -->
+      <section id="s03" class="border-y border-line bg-paper-deep/40">
+        <div class="n-container scroll-mt-36 py-12 sm:py-16">
+          <StorySectionHead
+            no="03"
+            title="潜伏：角落里的两年"
+            kicker="2024 — 2025 · The quiet years"
+            lede="从 2024 年底到 2025 年底，奶蛙一直在，但不在 C 位。它更像一张被反复转存、却没人说得清出处的“野生图”。"
+          />
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="rounded-[22px] border border-jade/30 bg-surface p-5">
+              <div class="flex items-center justify-between">
+                <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-jade">Track A · 奶蛙线</p>
+                <span class="rounded-full bg-jade/10 px-2 py-0.5 font-mono text-[8px] text-jade">形</span>
+              </div>
+              <ol class="mt-4 space-y-3">
+                <li class="flex gap-3">
+                  <span class="mt-1 h-2 w-2 shrink-0 rounded-full bg-jade" />
+                  <div><p class="font-mono text-[10px] text-jade">2024-10-02</p><p class="text-[12px] text-ink-2">星野智能体背景图生成，奶蛙诞生。</p></div>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-1 h-2 w-2 shrink-0 rounded-full bg-jade" />
+                  <div><p class="font-mono text-[10px] text-jade">2024-12</p><p class="text-[12px] text-ink-2">抖音出现带“星野”水印的奶蛙视频，小范围传播。</p></div>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-1 h-2 w-2 shrink-0 rounded-full bg-jade" />
+                  <div><p class="font-mono text-[10px] text-jade">2025-03-07</p><p class="text-[12px] text-ink-2">与季洪行视频 AI 融合，误认开始。</p></div>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-1 h-2 w-2 shrink-0 rounded-full bg-jade" />
+                  <div><p class="font-mono text-[10px] text-jade">2025 年内</p><p class="text-[12px] text-ink-2">纲手[百豪] 为形象被看见而高兴；奶蛙仍未出圈。</p></div>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-1 h-2 w-2 shrink-0 rounded-full bg-accent" />
+                  <div><p class="font-mono text-[10px] text-accent">2026-08-04</p><p class="text-[12px] text-ink-2">星野智能体被找到，来源确认。</p></div>
+                </li>
+              </ol>
+            </div>
+
+            <div class="rounded-[22px] border border-rose/30 bg-surface p-5">
+              <div class="flex items-center justify-between">
+                <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-rose">Track B · 大笑奶龙线</p>
+                <span class="rounded-full bg-rose/10 px-2 py-0.5 font-mono text-[8px] text-rose">声</span>
+              </div>
+              <ol class="mt-4 space-y-3">
+                <li class="flex gap-3">
+                  <span class="mt-1 h-2 w-2 shrink-0 rounded-full bg-rose" />
+                  <div><p class="font-mono text-[10px] text-rose">2025 年内</p><p class="text-[12px] text-ink-2">季洪行的武打视频被 AI 换成奶龙，配上八级哥笑声。</p></div>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-1 h-2 w-2 shrink-0 rounded-full bg-rose" />
+                  <div><p class="font-mono text-[10px] text-rose">2026-01-15</p><p class="text-[12px] text-ink-2">官方回复“请勿恶搞”，反而坐实“这是奶龙”，热度膨胀。</p></div>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-1 h-2 w-2 shrink-0 rounded-full bg-rose" />
+                  <div><p class="font-mono text-[10px] text-rose">2026-03-05</p><p class="text-[12px] text-ink-2">《奶龙大笑出处完整版》359 万播放，笑声成为公共素材。</p></div>
+                </li>
+              </ol>
+              <p class="mt-4 rounded-xl border border-rose/20 bg-rose/5 p-3 text-[11px] leading-relaxed text-ink-2">
+                <strong class="text-ink">不要混线：</strong>
+                大笑奶龙是“人变龙”，奶蛙是“龙变蛙”。它们在 2026 年初互相借势，但不是同一个东西。
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-8 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+            <div class="space-y-4 text-[14px] leading-[1.9] text-ink-2">
+              <p>
+                为什么奶蛙在 2024-2025 没有立刻爆？原因很具体：星野的智能体后来被下架整改，原图无法访问；
+                传播到抖音的版本又被裁掉了水印、翻转了颜色，来源线索一次次断掉；再加上当时更出圈的是
+                <strong class="text-ink">“我是奶龙”</strong>，奶蛙只在小圈子里被当作猎奇素材。
+              </p>
+              <p>
+                但它一直在积累两样东西：<strong class="text-ink">一张足够简单的脸</strong>，和
+                <strong class="text-ink">一个足够魔性的笑声</strong>。前者让它容易被复制，后者让它容易被记住。
+                到 2026 年，这两样东西终于合流。
+              </p>
+              <p>
+                还有一个反例必须保留：考据群曾发现一条 <strong class="text-ink">2024-08-23</strong> 的 B 站视频里出现过奶蛙，
+                水印与星野不同、发布时间更早。主流解释是“后期换源”，但这个反例没有被完全排除。
+                所以严格说，奶蛙的“第一张图”仍有 1% 的悬念。
+              </p>
+            </div>
+
+            <aside class="relative rounded-[22px] border border-dashed border-line-strong bg-surface p-5">
+              <span class="absolute -top-2.5 left-4 bg-surface px-2 font-mono text-[9px] uppercase tracking-[0.16em] text-muted">Evidence file</span>
+              <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-accent">2024-08-23 · unresolved</p>
+              <h4 class="mt-1 font-display text-[24px] leading-tight text-ink">那个更早的视频，是怎么回事？</h4>
+              <p class="mt-2 text-[12px] leading-relaxed text-ink-2">
+                视频里出现了奶蛙，但 AI 水印不是星野，发布时间也更早。主流理论认为它是后期换源：
+                先发了一条普通视频，后来把画面替换成了奶蛙。因为没有原始文件，这个解释无法被百分百证实。
+              </p>
+              <dl class="mt-3 grid grid-cols-2 gap-2 border-t border-line pt-3 text-[10px]">
+                <div><dt class="font-mono text-[8px] uppercase tracking-[0.1em] text-muted">状态</dt><dd class="mt-0.5 text-ink-2">仍有争议</dd></div>
+                <div><dt class="font-mono text-[8px] uppercase tracking-[0.1em] text-muted">主流解释</dt><dd class="mt-0.5 text-ink-2">后期换源</dd></div>
+              </dl>
+              <a href="#src-S4" class="mt-3 inline-flex items-center gap-1 font-mono text-[9px] text-accent no-underline hover:underline">S4 · 失传媒体中文维基 <AppIcon name="arrow-up-right" :size="10" /></a>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== 04 爆发 ============================== -->
+      <section id="s04" class="n-container scroll-mt-36 py-12 sm:py-16">
+        <StorySectionHead
+          no="04"
+          title="爆发：笑声接管互联网"
+          kicker="2026 · The ritual"
+          lede="2026 年，奶蛙不再是一个形象，而是一种句式：先铺垫，再荒诞，最后所有人一起捧腹大笑。"
+        />
+
+        <div class="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-10">
+          <div class="space-y-4 text-[14px] leading-[1.9] text-ink-2">
+            <p>
+              奶蛙二创有一个几乎固定的三段式：<strong class="text-ink">铺垫 → 摩擦前额叶 → 全员捧腹</strong>。
+              不管前面是名画、历史、游戏、职场还是家庭伦理，结尾都会收束到同一个动作：
+              黄色梨形身体弯下腰，双手捧腹，嘴巴张到最大，笑声响起。
+            </p>
+            <p>
+              声音通常来自《无畏契约》博主<strong class="text-ink">八级哥</strong>：他用“老水牛变声器”处理过的笑声，
+              被人单独截出来，成了新一代“私人笑声”。另一个常见素材是<strong class="text-ink">变调的不知火舞语音</strong>。
+              两者一前一后，构成“先荒诞、后爆笑”的听觉钩子。
+            </p>
+            <p>
+              AI 工具把生产成本压到接近零：一张图、一段语音、一个模板，就能批量生产。
+              于是奶蛙开始“入侵”人类文明史——它可以在《创造亚当》里与上帝碰手指，
+              可以在《梅杜萨之筏》上等待海难，也可以化身“拿破蛙”翻越阿尔卑斯山。
+            </p>
+            <p>
+              机核的作者用一句话总结这场“文艺复兴”：
+              <strong class="text-ink">“旧龙已死，而新蛙当立。”</strong>
+              这句话是二创的修辞，不是事实判断；但它准确描述了 2026 年中文互联网的权力交接感。
+            </p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 self-start">
+            <figure class="overflow-hidden rounded-[20px] border border-line bg-surface">
+              <button type="button" class="group relative block w-full" @click="openLightbox({ src: '/story/naiwa-laugh.jpg', alt: '奶蛙捧腹大笑', caption: '奶蛙捧腹大笑：二创视频最常见的收尾动作。' })">
+                <img src="/story/naiwa-laugh.jpg" alt="奶蛙捧腹大笑" class="aspect-[4/3] w-full object-cover transition duration-700 group-hover:scale-[1.03]" loading="lazy" decoding="async" />
+                <span class="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full border border-white/30 bg-black/35 text-[10px] text-white opacity-0 backdrop-blur transition group-hover:opacity-100">⤢</span>
+              </button>
+              <figcaption class="px-3 py-2 text-[10px] leading-relaxed text-muted">捧腹大笑：所有二创共享的“收束动作”。</figcaption>
+            </figure>
+            <figure class="overflow-hidden rounded-[20px] border border-line bg-surface">
+              <button type="button" class="group relative block w-full" @click="openLightbox({ src: '/story/naiwa-squint.jpg', alt: '奶蛙斜视 meme', caption: '奶蛙斜视 meme：用“滑车神经麻痹”解释斜视，是“万物皆可学术化”的代表。' })">
+                <img src="/story/naiwa-squint.jpg" alt="奶蛙斜视 meme 与滑车神经示意图" class="aspect-[4/3] w-full object-cover transition duration-700 group-hover:scale-[1.03]" loading="lazy" decoding="async" />
+                <span class="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full border border-white/30 bg-black/35 text-[10px] text-white opacity-0 backdrop-blur transition group-hover:opacity-100">⤢</span>
+              </button>
+              <figcaption class="px-3 py-2 text-[10px] leading-relaxed text-muted">斜视 meme：把怪相解释成医学图，是另一种“学术化”。</figcaption>
+            </figure>
+            <div class="col-span-2 rounded-[20px] border border-line bg-surface-2 p-4">
+              <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-muted">B 站数据 · 2026-10-31 核验</p>
+              <div class="mt-2 grid grid-cols-3 gap-3">
+                <div><p class="font-display text-[24px] leading-none tabular text-ink">359 万</p><p class="mt-1 text-[9px] text-muted">《奶龙大笑出处完整版》</p></div>
+                <div><p class="font-display text-[24px] leading-none tabular text-ink">138 万</p><p class="mt-1 text-[9px] text-muted">《植龙大战僵奶》</p></div>
+                <div><p class="font-display text-[24px] leading-none tabular text-ink">31.9 万</p><p class="mt-1 text-[9px] text-muted">《最后的奶龙……》</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-8">
+          <StoryRecipe />
+        </div>
+
+        <div class="mt-10">
+          <div class="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <p class="eyebrow mb-1">The expanded universe</p>
+              <h3 class="font-display text-[24px] leading-none text-ink">奶蛙宇宙：它后来长出了什么</h3>
+            </div>
+            <span class="hidden font-mono text-[9px] uppercase tracking-[0.14em] text-muted sm:block">Three branches</span>
+          </div>
+          <div class="grid gap-3 md:grid-cols-3">
+            <article class="group overflow-hidden rounded-[22px] border border-line bg-surface">
+              <div class="relative aspect-[16/10] overflow-hidden">
+                <img src="/story/naiwa.jpg" alt="奶蛙名画二创的基底形象" class="h-full w-full object-cover transition duration-700 group-hover:scale-105" loading="lazy" />
+                <span class="absolute left-2 top-2 rounded-full border border-white/20 bg-black/40 px-2 py-0.5 font-mono text-[8px] tracking-[0.1em] text-white/80 backdrop-blur">二创基底</span>
+              </div>
+              <div class="p-4">
+                <p class="font-mono text-[8px] uppercase tracking-[0.14em] text-sky">Branch 01</p>
+                <h4 class="mt-1 font-display text-[21px] leading-tight text-ink">名画与历史</h4>
+                <p class="mt-1.5 text-[11px] leading-relaxed text-muted">《创造亚当》《梅杜萨之筏》《拿破蛙》，以及“被缚的奶蛙”。用 AI 把蛙嵌进艺术史，反差最大。</p>
+              </div>
+            </article>
+            <article class="group overflow-hidden rounded-[22px] border border-line bg-surface">
+              <div class="aspect-[16/10] overflow-hidden">
+                <img src="/story/naiwa-squint.jpg" alt="奶蛙斜视表情包" class="h-full w-full object-cover transition duration-700 group-hover:scale-105" loading="lazy" />
+              </div>
+              <div class="p-4">
+                <p class="font-mono text-[8px] uppercase tracking-[0.14em] text-jade">Branch 02</p>
+                <h4 class="mt-1 font-display text-[21px] leading-tight text-ink">表情包与鬼畜</h4>
+                <p class="mt-1.5 text-[11px] leading-relaxed text-muted">从“捧腹大笑”到“斜视”“吃面”“你胆子肥嘟嘟”，奶蛙的脸被切成无数个可复用表情。</p>
+              </div>
+            </article>
+            <article class="group overflow-hidden rounded-[22px] border border-line bg-surface">
+              <div class="aspect-[16/10] overflow-hidden">
+                <img src="/story/niulai.jpg" alt="牛来：黄色三幻神之一" class="h-full w-full object-cover transition duration-700 group-hover:scale-105" loading="lazy" />
+              </div>
+              <div class="p-4">
+                <p class="font-mono text-[8px] uppercase tracking-[0.14em] text-rose">Branch 03</p>
+                <h4 class="mt-1 font-display text-[21px] leading-tight text-ink">黄色三幻神</h4>
+                <p class="mt-1.5 text-[11px] leading-relaxed text-muted">奶蛙、牛来、美团袋鼠被并列成“三幻神”。它们不是同一作品，却共享同一套黄色抽象语法。</p>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <blockquote class="mt-8 border-l-4 border-accent bg-surface p-5 text-[15px] leading-relaxed text-ink-2">
+          “奶蛙们神情坚毅，活跃于各个历史舞台，但永远不会变的是视频末尾的卡痰音大笑和动感的 BABY DON’T CRY。”
+          <span class="mt-2 block font-mono text-[9px] uppercase tracking-[0.14em] text-muted">—— 机核用户投稿，2026-07-13（S12，文首标注含 AI 生成内容）</span>
+        </blockquote>
+      </section>
+
+      <!-- ============================== 05 时间线 ============================== -->
+      <section id="s05" class="border-y border-line bg-paper-deep/40">
+        <div class="n-container scroll-mt-36 py-12 sm:py-16">
+          <StorySectionHead
+            no="05"
+            title="完整时间线"
+            kicker="2020 — 2026 · 28 entries"
+            lede="从奶龙的第一条抖音，到奶蛙立牌进校园。可以按年筛选，也可以让页面自己放映一遍。"
+          />
+          <StoryTimeline />
+        </div>
+      </section>
+
+      <!-- ============================== 06 线下 ============================== -->
+      <section id="s06" class="n-container scroll-mt-36 py-12 sm:py-16">
+        <StorySectionHead
+          no="06"
+          title="线下：流动奶蛙"
+          kicker="2026 秋 · Campus"
+          lede="2026 年秋天，奶蛙从手机里爬了出来。它没有腿，却出现在近百所高校的阳台、操场和绿化带里。"
+        />
+
+        <div class="grid gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-start lg:gap-10">
+          <!-- 立牌 -->
+          <div class="relative mx-auto w-full max-w-[340px] rotate-[-2deg]">
+            <div class="rounded-[18px] border-2 border-ink bg-surface p-2.5 shadow-[8px_10px_0_0_rgba(24,21,16,.14)]">
+              <img src="/story/naiwa-laugh.jpg" alt="奶蛙立牌示意：捧腹大笑的奶蛙" class="aspect-[3/4] w-full rounded-[10px] object-cover" loading="lazy" />
+              <div class="flex items-center justify-between px-1 pt-2">
+                <p class="font-display text-[18px] leading-none text-ink">请把我搬到别处</p>
+                <span class="font-mono text-[8px] uppercase tracking-[0.14em] text-muted">Flow #042</span>
+              </div>
+            </div>
+            <div class="absolute -left-5 top-16 rotate-[-7deg] rounded-sm border border-ink/20 bg-butter px-2 py-1 font-mono text-[8px] tracking-[0.08em] text-[#181510] shadow-sm">
+              流动奶龙 · 2026
+            </div>
+            <div class="absolute -right-4 bottom-16 rotate-[6deg] rounded-sm border border-ink/20 bg-surface px-2 py-1 font-mono text-[8px] tracking-[0.08em] text-ink-2 shadow-sm">
+              请勿放消防通道
+            </div>
+            <p class="mt-3 text-center font-mono text-[8px] uppercase tracking-[0.14em] text-muted">立牌为示意拼贴，不是某所学校的实拍</p>
+          </div>
+
+          <div class="space-y-4 text-[14px] leading-[1.9] text-ink-2">
+            <p>
+              目前流传最广的起点说法，是<strong class="text-ink">中国矿业大学</strong>。据学生帖文，两个社团在招新时摆出了奶蛙立牌。
+              有人在立牌背面手写了一行字，把它称作“流动奶龙”，并鼓励发现者把它搬到校园里的其他地方。
+              这行字被下一个人看到，于是立牌开始移动。
+            </p>
+            <p>
+              手写通知后来升级成打印版，又加上了安全提示：“请勿放置于教学区域、宿舍楼内部、消防通道等影响正常秩序或安全的位置。”
+              规则越写越正式，参与的人却越来越多。据不完全统计，奶蛙立牌已经出现在国内<strong class="text-ink">近百所高校</strong>，
+              并扩散到中国港台乃至北美校园。
+            </p>
+            <p>
+              它出现的位置高度随机：宿舍阳台、军训操场、绿化带、图书馆外。有人给它戴迷彩帽，有人给它披透明雨衣，
+              有人把它摆在保安亭旁边。每一次“目击”都会被拍照、发帖、再引来下一次搬运。
+              线上梗变成线下接力，线下照片又反哺线上流量。
+            </p>
+            <p>
+              3DM 把它和四川农业大学的“搬牛”传统作比较：川农学生搬雕塑牛搬了近 20 年，学校甚至复制了五头放到成都校区；
+              而奶蛙立牌是<strong class="text-ink">全网共享的梗</strong>，不局限于一所学校，传播速度更快，也更依赖平台。
+            </p>
+
+            <div class="grid gap-2 sm:grid-cols-3">
+              <div class="rounded-xl border border-line bg-surface p-3">
+                <p class="font-mono text-[8px] uppercase tracking-[0.12em] text-muted">起点</p>
+                <p class="mt-1 text-[12px] font-semibold text-ink">中国矿业大学</p>
+                <p class="mt-0.5 text-[10px] text-muted">社团招新</p>
+              </div>
+              <div class="rounded-xl border border-line bg-surface p-3">
+                <p class="font-mono text-[8px] uppercase tracking-[0.12em] text-muted">规模</p>
+                <p class="mt-1 text-[12px] font-semibold text-ink">近 100 所高校</p>
+                <p class="mt-0.5 text-[10px] text-muted">据不完全统计</p>
+              </div>
+              <div class="rounded-xl border border-line bg-surface p-3">
+                <p class="font-mono text-[8px] uppercase tracking-[0.12em] text-muted">机制</p>
+                <p class="mt-1 text-[12px] font-semibold text-ink">背面留言</p>
+                <p class="mt-0.5 text-[10px] text-muted">搬运 → 拍照 → 发帖</p>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-butter/50 bg-butter/15 p-4 text-[12px] leading-relaxed">
+              <strong class="text-ink">但别忽略风险：</strong>
+              立牌大多是学生自制的，奶蛙本身没有版权方，不代表可以随意使用他人的照片、校徽或场地；
+              摆放在消防通道、教学区也可能被学校清理。玩梗可以，别给别人添麻烦。
+            </div>
+          </div>
+        </div>
+
+        <blockquote class="mt-8 max-w-3xl border-l-4 border-jade bg-surface p-5 text-[14px] leading-relaxed text-ink-2">
+          “正因为奶蛙没有官方设定，没有版权归属，所以它不属于任何人，也因此属于所有人。”
+          <span class="mt-2 block font-mono text-[9px] uppercase tracking-[0.14em] text-muted">—— 游民星空，2026-10-11（S8）</span>
+        </blockquote>
+      </section>
+
+      <!-- ============================== 07 造物主 ============================== -->
+      <section id="s07" class="border-y border-line bg-ink text-paper">
+        <div class="n-container scroll-mt-36 py-12 sm:py-16">
+          <div class="mb-7">
+            <p class="font-mono text-[9px] uppercase tracking-[0.22em] text-paper/50">07 · The creator · 反色档案</p>
+            <h2 class="mt-2 font-display text-[34px] leading-[0.95] text-paper sm:text-[46px]">造物主：赛博两相隔</h2>
+            <p class="mt-4 max-w-2xl text-[14px] leading-[1.85] text-paper/70">
+              这是整个故事里最不好笑的部分。一个被上亿次观看的形象，和一个不能被看见的人。
+            </p>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="rounded-[22px] border border-paper/15 bg-paper/[0.06] p-5">
+              <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-paper/50">The creation</p>
+              <p class="mt-1 font-display text-[64px] leading-none tabular text-accent sm:text-[80px]">1 亿+</p>
+              <p class="mt-2 text-[12px] leading-relaxed text-paper/70">据手谈姬报道，奶蛙相关内容的播放量已经过亿。它有自己的周边、手机壳、微信小游戏和校园立牌。</p>
+            </div>
+            <div class="rounded-[22px] border border-paper/15 bg-paper/[0.06] p-5">
+              <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-paper/50">The signature</p>
+              <p class="mt-1 font-display text-[64px] leading-none tabular text-accent sm:text-[80px]">0</p>
+              <p class="mt-2 text-[12px] leading-relaxed text-paper/70">没有署名，没有授权，没有公开认领。原作者没有公开现身，相关智能体已经无法访问。</p>
+            </div>
+          </div>
+
+          <div class="mt-8 grid gap-8 lg:grid-cols-[1.05fr_0.95fr]">
+            <div class="space-y-4 text-[14px] leading-[1.9] text-paper/75">
+              <p>
+                奶蛙火了之后，网友开始找它的作者。2026 年 8 月，星野智能体被找到，源头指向「纲手[百豪]」。
+                但这次“破案”没有带来团圆结局：奶龙官方对评论区里的奶蛙图片采取拉黑、删评，后来一度关闭评论区；版权与法律风险被反复讨论；
+                原作者没有公开现身，智能体也已无法访问。
+              </p>
+              <p>
+                手谈姬把这件事写成“2026 互联网最悲怆的赛博两相隔”：
+                <strong class="text-paper">“奶蛙的形象全网传播，播放过亿，甚至还有自己的周边和专属手机壳。
+                但他的创作者，却终生不得与自己的造物相认。”</strong>
+              </p>
+              <p>
+                需要说明：“终生不得”是修辞，不是法律事实；我们也不知道双方是否真的有过法律接触。
+                可确认的只有三件事：智能体已经不可访问；原作者没有公开现身；奶龙官方从未公开承认奶蛙。
+              </p>
+              <p>
+                社区把这件事继续写成了梗：“生母弃我，胞兄厌我，世人笑我，似龙非龙，似蛙非蛙。”
+                这段话很动人，也很残忍——它把一位真实的人，变成了一个神话里的“弃母”。
+              </p>
+            </div>
+
+            <div class="rounded-[22px] border border-paper/15 bg-paper/[0.06] p-5">
+              <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-paper/50">What we know / don't</p>
+              <dl class="mt-3 space-y-3 text-[12px] leading-relaxed">
+                <div class="border-b border-paper/10 pb-3">
+                  <dt class="flex items-center gap-2 font-semibold text-paper"><span class="text-jade">✓</span> 已知</dt>
+                  <dd class="mt-1 text-paper/65">2024-10-02 创建智能体；ID zNCvQDKfXy；来源经失传媒体维基确认；维基提醒避免打扰作者。</dd>
+                </div>
+                <div class="border-b border-paper/10 pb-3">
+                  <dt class="flex items-center gap-2 font-semibold text-paper"><span class="text-butter">?</span> 未知</dt>
+                  <dd class="mt-1 text-paper/65">作者的真实身份、年龄、职业；是否收到过律师函；智能体不可访问的具体原因。</dd>
+                </div>
+                <div>
+                  <dt class="flex items-center gap-2 font-semibold text-paper"><span class="text-rose">✕</span> 不要做</dt>
+                  <dd class="mt-1 text-paper/65">人肉、围堵、冒充“认亲”、在评论区刷“你妈来了”。这些都不是考古。</dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+
+          <div class="mt-8 rounded-[22px] border border-accent/40 bg-accent/10 p-5">
+            <p class="font-mono text-[9px] uppercase tracking-[0.18em] text-accent">Ethics note</p>
+            <p class="mt-1 text-[13px] leading-relaxed text-paper/80">
+              失传媒体中文维基在词条顶部专门写了一句话：“据悉纲手【百豪】本人可能对该作品不感兴趣，请尽量避免打扰其本人。”
+              本页赞同这句话。<strong class="text-paper">考据的终点不是找到一个人，而是理解一件事。</strong>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== 08 争议 ============================== -->
+      <section id="s08" class="n-container scroll-mt-36 py-12 sm:py-16">
+        <StorySectionHead
+          no="08"
+          title="争议：版权与反噬"
+          kicker="Who owns it?"
+          lede="一个没有版权的东西，为什么能活这么久？它又在反噬谁？这一章不站队，只把争论摆出来。"
+        />
+
+        <div class="grid gap-3 md:grid-cols-2">
+          <article class="rounded-[22px] border border-line bg-surface p-5">
+            <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-sky">Debate 01</p>
+            <h3 class="mt-1 font-display text-[24px] leading-tight text-ink">官方为什么不直接告？</h3>
+            <p class="mt-2 text-[12px] leading-relaxed text-ink-2">
+              一方认为：奶蛙明显源自奶龙，官方完全有理由维权。另一方认为：奶蛙是 AI 生成、二创层层转存、责任主体极其分散，
+              起诉成本和舆论风险都太高。3DM 的分析是“法不责众”+“AI 内容难以定性”。
+              截至目前，奶龙官方没有发布过针对奶蛙的公开声明。
+            </p>
+            <div class="mt-3 flex flex-wrap gap-1.5 font-mono text-[8px] text-muted">
+              <a href="#src-S6" class="rounded-full border border-line px-2 py-0.5 no-underline transition hover:border-accent hover:text-accent">S6</a>
+              <a href="#src-S5" class="rounded-full border border-line px-2 py-0.5 no-underline transition hover:border-accent hover:text-accent">S5</a>
+            </div>
+          </article>
+
+          <article class="rounded-[22px] border border-line bg-surface p-5">
+            <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-rose">Debate 02</p>
+            <h3 class="mt-1 font-display text-[24px] leading-tight text-ink">AI 数据污染：奶龙会不会被奶蛙“吃掉”？</h3>
+            <p class="mt-2 text-[12px] leading-relaxed text-ink-2">
+              有网友转述：奶龙公司曾考虑用 AI 做视频，但因为生成结果里奶蛙出现得太多而放弃。
+              这个说法没有官方证实，本页标为<strong class="text-ink">未证实</strong>。
+              但它指向一个真实的问题：当二创的图片量超过原图，模型会先学会“蛙”，再学会“龙”。
+            </p>
+            <div class="mt-3 flex flex-wrap gap-1.5 font-mono text-[8px] text-muted">
+              <a href="#src-S11" class="rounded-full border border-line px-2 py-0.5 no-underline transition hover:border-accent hover:text-accent">S11 · 网友转述</a>
+              <a href="#src-S14" class="rounded-full border border-line px-2 py-0.5 no-underline transition hover:border-accent hover:text-accent">S14 · 未证实</a>
+            </div>
+          </article>
+
+          <article class="rounded-[22px] border border-line bg-surface p-5">
+            <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-jade">Debate 03</p>
+            <h3 class="mt-1 font-display text-[24px] leading-tight text-ink">审丑，还是创作？</h3>
+            <p class="mt-2 text-[12px] leading-relaxed text-ink-2">
+              反对者说它丑、猎奇、低成本、污染信息流；支持者说名画二创有真正的构图与幽默，
+              “点一下就会笑”是一种极简的交互设计。两种说法都成立——奶蛙的创作光谱很宽，
+              从一键生成的垃圾到认真重绘的油画，都叫奶蛙。
+            </p>
+            <div class="mt-3 flex flex-wrap gap-1.5 font-mono text-[8px] text-muted">
+              <a href="#src-S8" class="rounded-full border border-line px-2 py-0.5 no-underline transition hover:border-accent hover:text-accent">S8</a>
+              <a href="#src-S12" class="rounded-full border border-line px-2 py-0.5 no-underline transition hover:border-accent hover:text-accent">S12</a>
+            </div>
+          </article>
+
+          <article class="rounded-[22px] border border-rose/30 bg-rose/5 p-5">
+            <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-rose">Debate 04</p>
+            <h3 class="mt-1 font-display text-[24px] leading-tight text-ink">“找到作者”是不是一种暴力？</h3>
+            <p class="mt-2 text-[12px] leading-relaxed text-ink-2">
+              考据让真相浮出水面，但“认亲”也可能变成围观的借口。原作者已经隐身，
+              继续寻找、推测身份、在评论区刷“奶蛙之母”，都不是在保护创作，而是在消费一个人。
+              这一条没有“另一方”：本页明确反对骚扰。
+            </p>
+            <div class="mt-3 flex flex-wrap gap-1.5 font-mono text-[8px] text-muted">
+              <a href="#src-S4" class="rounded-full border border-line px-2 py-0.5 no-underline transition hover:border-accent hover:text-accent">S4 · 词条警告</a>
+              <a href="#src-S5" class="rounded-full border border-line px-2 py-0.5 no-underline transition hover:border-accent hover:text-accent">S5</a>
+            </div>
+          </article>
+        </div>
+
+        <div class="mt-8 overflow-hidden rounded-[22px] border border-line bg-surface">
+          <div class="border-b border-line px-5 py-3">
+            <p class="font-mono text-[9px] uppercase tracking-[0.18em] text-muted">Claim status</p>
+            <h3 class="mt-1 font-display text-[22px] leading-none text-ink">哪些说法能信？</h3>
+          </div>
+          <div class="divide-y divide-line/70">
+            <div class="flex items-start gap-3 px-5 py-3">
+              <span class="mt-0.5 rounded-full border border-jade/30 bg-jade/10 px-2 py-0.5 font-mono text-[8px] text-jade">真</span>
+              <p class="text-[12px] leading-relaxed text-ink-2">奶蛙来自星野用户「纲手[百豪]」2024-10-02 创建的奶龙智能体背景图。</p>
+            </div>
+            <div class="flex items-start gap-3 px-5 py-3">
+              <span class="mt-0.5 rounded-full border border-jade/30 bg-jade/10 px-2 py-0.5 font-mono text-[8px] text-jade">真</span>
+              <p class="text-[12px] leading-relaxed text-ink-2">奶蛙不是官方角色，没有官方版权；核心动作是捧腹大笑。</p>
+            </div>
+            <div class="flex items-start gap-3 px-5 py-3">
+              <span class="mt-0.5 rounded-full border border-rose/30 bg-rose/10 px-2 py-0.5 font-mono text-[8px] text-rose">假</span>
+              <p class="text-[12px] leading-relaxed text-ink-2">“奶蛙是季洪行变的。”——季洪行对应“大笑奶龙”，与奶蛙生成链无关。</p>
+            </div>
+            <div class="flex items-start gap-3 px-5 py-3">
+              <span class="mt-0.5 rounded-full border border-butter/50 bg-butter/15 px-2 py-0.5 font-mono text-[8px] text-ink-2">存疑</span>
+              <p class="text-[12px] leading-relaxed text-ink-2">“2024-08-23 的 B 站视频才是最早源头。”——主流解释为后期换源，未完全排除。</p>
+            </div>
+            <div class="flex items-start gap-3 px-5 py-3">
+              <span class="mt-0.5 rounded-full border border-butter/50 bg-butter/15 px-2 py-0.5 font-mono text-[8px] text-ink-2">未证实</span>
+              <p class="text-[12px] leading-relaxed text-ink-2">“作者因律师函删号”“奶蛙导致奶龙无法用 AI 续作”——均为网友转述，没有官方或当事人确认。</p>
+            </div>
+          </div>
+        </div>
+
+        <p class="mt-4 text-[11px] leading-relaxed text-muted">
+          说明：本页不对任何一方作法律判断。奶龙、奶蛙相关形象与商标的权利归原权利人所有；本页仅作文化考据与介绍。
+          严格说，“没有版权”是网友口语，指没有官方版权方与授权体系，不等于任何人都可以不受限制地商用。
+        </p>
+      </section>
+
+      <!-- ============================== 09 档案馆 ============================== -->
+      <section id="s09" class="border-t border-line bg-paper-deep/40">
+        <div class="n-container scroll-mt-36 py-12 sm:py-16">
+          <StorySectionHead
+            no="09"
+            title="档案馆"
+            kicker="Videos · Lexicon · Sources"
+            lede="原始视频可能被下架或换源。如果播放器无法加载，请点“在 B 站打开”。所有 B 站数据于 2026-10-31 通过公开 API 核验。"
+          />
+
+          <!-- 视频 -->
+          <div class="overflow-hidden rounded-[26px] border border-line bg-surface">
+            <div class="grid lg:grid-cols-[1.15fr_0.85fr]">
+              <div class="relative aspect-video overflow-hidden bg-black">
+                <div class="pointer-events-none absolute inset-0">
+                  <img src="/story/naiwa-laugh.jpg" alt="" class="h-full w-full object-cover opacity-45" loading="lazy" />
+                  <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                  <p class="absolute bottom-3 left-4 font-mono text-[9px] uppercase tracking-[0.14em] text-white/60">
+                    Bilibili player · 若无法加载请点右侧「在 B 站打开」
+                  </p>
+                </div>
+                <iframe
+                  v-if="activeBvid"
+                  :src="embedUrl"
+                  class="relative z-10 h-full w-full"
+                  scrolling="no"
+                  frameborder="no"
+                  allowfullscreen="true"
+                  loading="lazy"
+                  :title="activeVideoData.title"
+                />
+              </div>
+
+              <div class="flex min-w-0 flex-col p-5">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="rounded-full border border-jade/30 bg-jade/10 px-2 py-0.5 font-mono text-[8px] text-jade">{{ activeVideoData.id }}</span>
+                  <span class="font-mono text-[9px] text-muted">{{ activeVideoData.date }}</span>
+                </div>
+                <h3 class="mt-2 font-display text-[24px] leading-tight text-ink">{{ activeVideoData.title }}</h3>
+                <p class="mt-1 text-[11px] text-muted">{{ activeVideoData.publisher }}</p>
+                <p class="mt-3 flex-1 text-[12px] leading-relaxed text-ink-2">{{ activeVideoData.note }}</p>
+                <p class="mt-2 font-mono text-[9px] text-muted">{{ activeVideoData.reliability }}</p>
+                <a :href="activeVideoData.url" target="_blank" rel="noopener" class="n-btn n-btn-primary n-btn-sm mt-4 self-start no-underline">
+                  在 B 站打开 <AppIcon name="external" :size="13" />
+                </a>
+              </div>
+            </div>
+
+            <div class="border-t border-line">
               <button
-                @click="openVideo(v)"
-                class="mt-4 self-start px-4 py-2 rounded-2xl n-btn n-btn-primary n-btn-sm"
+                v-for="video in videoSources"
+                :key="video.id"
+                type="button"
+                class="flex w-full items-center gap-3 border-b border-line/60 px-4 py-3 text-left transition last:border-b-0"
+                :class="activeVideo === video.id ? 'bg-butter/15' : 'hover:bg-surface-2'"
+                :aria-pressed="activeVideo === video.id"
+                @click="activeVideo = video.id"
               >
-                在源站打开 ↗
+                <span class="w-6 shrink-0 font-mono text-[9px] text-muted">{{ video.id }}</span>
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-[12px] font-medium text-ink">{{ video.title }}</span>
+                  <span class="mt-0.5 block truncate font-mono text-[9px] text-muted">{{ video.publisher }} · {{ video.date }}</span>
+                </span>
+                <span class="hidden shrink-0 font-mono text-[8px] text-muted sm:block">{{ video.reliability }}</span>
+                <span class="font-mono text-[11px] text-accent">{{ activeVideo === video.id ? '播放中' : '▶' }}</span>
               </button>
             </div>
           </div>
-        </article>
-      </div>
-    </section>
 
-    <!-- ===== 参考资料 ===== -->
-    <section id="refs" class="rounded-[24px] border border-line bg-surface p-6 md:p-8 mb-10 scroll-mt-24">
-      <h2 class="font-display text-[28px] leading-tight text-ink mb-4">📚 参考资料</h2>
-      <ol class="space-y-3 text-sm">
-        <li v-for="s in sources" :key="s.no" class="flex gap-3">
-          <span class="font-mono text-accent shrink-0">{{ s.no }}</span>
-          <div>
-            <a :href="s.url" target="_blank" rel="noopener" class="text-accent hover:underline">{{ s.title }}</a>
-            <div class="text-xs text-muted mt-0.5">{{ s.meta }}</div>
-            <div v-if="s.note" class="text-xs text-orange-500 mt-0.5">{{ s.note }}</div>
-          </div>
-        </li>
-        <li class="flex gap-3">
-          <span class="font-mono text-accent shrink-0">[6-10]</span>
-          <div>
-            <div class="text-ink-2">B站 / 抖音 二创视频（正文中已逐条标注出处）：
-              <a href="https://www.bilibili.com/video/BV1iY3d67Edg/" target="_blank" rel="noopener" class="text-accent hover:underline">奶蛙这张图的由来我找到了</a>、
-              <a href="https://www.bilibili.com/video/BV1HZgV6TETB/" target="_blank" rel="noopener" class="text-accent hover:underline">09年dv录制奶蛙捧腹大笑</a>、
-              <a href="https://www.bilibili.com/video/BV1AxhK6BE54/" target="_blank" rel="noopener" class="text-accent hover:underline">【奶蛙】斜视meme</a>、
-              <a href="https://www.bilibili.com/video/BV1ajCDYjE1Y/" target="_blank" rel="noopener" class="text-accent hover:underline">十年擦边无人问，cos奶龙天下知</a>、
-              <a href="https://www.douyin.com/video/7632479202756063995" target="_blank" rel="noopener" class="text-accent hover:underline">被缚的奶蛙（抖音）</a>
+          <!-- 词典 -->
+          <div class="mt-10">
+            <div class="mb-3 flex items-end justify-between gap-3">
+              <div>
+                <p class="eyebrow mb-1">Lexicon</p>
+                <h3 class="font-display text-[24px] leading-none text-ink">奶蛙词典</h3>
+              </div>
+              <span class="hidden font-mono text-[9px] uppercase tracking-[0.14em] text-muted sm:block">Search the lore</span>
             </div>
-            <div class="text-xs text-muted mt-0.5">B站数据（标题/UP主/播放量）经 Bilibili 公开 API 于本页制作时核验。</div>
+            <StoryLexicon />
           </div>
-        </li>
-      </ol>
-      <p class="text-xs text-muted mt-6">
-        ⚠️ 说明：页内所有图片与视频均来自公开报道/视频封面，版权归原作者所有，仅作介绍与考据用途；若涉及侵权请联系站长删除。
-      </p>
-    </section>
 
-    <!-- ===== 回到主页 ===== -->
-    <section class="text-center py-6">
-      <p class="text-muted text-sm mb-4">看完奶蛙的成长史，想看图片？</p>
-      <div class="flex justify-center gap-3">
-        <router-link to="/" class="n-btn n-btn-primary no-underline">🖼️ 返回图片主页</router-link>
-        <router-link to="/featured" class="px-5 py-2.5 rounded-2xl bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-ink-2 text-sm no-underline transition-colors">⭐ 精选推荐</router-link>
-        <router-link to="/other" class="px-5 py-2.5 rounded-2xl bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-ink-2 text-sm no-underline transition-colors">🧸 其他推荐</router-link>
+          <!-- 参考资料 -->
+          <div id="refs" class="mt-12 scroll-mt-36">
+            <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p class="eyebrow mb-1">References</p>
+                <h3 class="font-display text-[24px] leading-none text-ink">参考资料</h3>
+              </div>
+              <p class="font-mono text-[9px] uppercase tracking-[0.14em] text-muted">{{ sources.length }} 条 · 按类型分组</p>
+            </div>
+
+            <div class="space-y-6">
+              <section v-for="group in sourceGroups" :key="group.kind">
+                <h4 class="mb-2 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.16em] text-muted">
+                  <span class="h-1.5 w-1.5 bg-accent" />{{ group.label }}
+                  <span class="text-muted/60">({{ group.items.length }})</span>
+                </h4>
+                <ol class="space-y-2">
+                  <li
+                    v-for="source in group.items"
+                    :id="'src-' + source.id"
+                    :key="source.id"
+                    class="scroll-mt-40 rounded-xl border border-transparent px-3 py-2.5 transition hover:border-line hover:bg-surface"
+                  >
+                    <div class="flex items-start gap-3">
+                      <span class="mt-0.5 w-8 shrink-0 font-mono text-[10px] text-accent">{{ source.id }}</span>
+                      <div class="min-w-0">
+                        <a :href="source.url" target="_blank" rel="noopener" class="text-[12px] font-medium text-ink no-underline hover:text-accent hover:underline">
+                          {{ source.title }}
+                        </a>
+                        <p class="mt-0.5 text-[10px] text-muted">{{ source.publisher }} · {{ source.date }}</p>
+                        <p class="mt-1 text-[10px] leading-relaxed text-ink-2">{{ source.reliability }}</p>
+                        <p v-if="source.note" class="mt-0.5 text-[10px] leading-relaxed text-muted">{{ source.note }}</p>
+                      </div>
+                    </div>
+                  </li>
+                </ol>
+              </section>
+            </div>
+
+            <div class="mt-6 rounded-[20px] border border-line bg-surface p-5">
+              <p class="font-mono text-[9px] uppercase tracking-[0.18em] text-muted">Methodology</p>
+              <h4 class="mt-1 font-display text-[20px] leading-tight text-ink">本页怎么判断真假</h4>
+              <div class="mt-3 grid gap-3 text-[11px] leading-relaxed text-ink-2 sm:grid-cols-2">
+                <p><strong class="text-ink">已确证：</strong>有直接物证或多个独立来源交叉印证。例如 2024-10-02 的智能体 ID、B 站播放量。</p>
+                <p><strong class="text-ink">媒体报道：</strong>来自可信媒体或当事人的公开叙述，但仍是单一线索。例如“播放过亿”“蛙母退圈”。</p>
+                <p><strong class="text-ink">仍有争议：</strong>存在反例或互相矛盾的说法。例如 2024-08-23 的视频是否换源。</p>
+                <p><strong class="text-ink">已辟谣：</strong>流传很广，但现有证据不支持。例如“奶蛙是季洪行变的”。</p>
+              </div>
+              <p class="mt-3 border-t border-line pt-3 text-[10px] leading-relaxed text-muted">
+                页面中的图片来自公开报道、B 站视频封面与公开传播版本，版权归原作者所有，仅作介绍与考据。
+                若涉及侵权，请联系站长删除。B 站播放量会随时间变化，本页只记录核验时的数值。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============================== 尾声 ============================== -->
+    <footer class="border-t border-line bg-paper">
+      <div class="n-container py-12 sm:py-16">
+        <div class="grid gap-8 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
+          <div>
+            <p class="eyebrow mb-3">Afterword</p>
+            <h2 class="display max-w-xl text-[34px] leading-[1.02] text-ink sm:text-[46px]">
+              它会不会过气？<br />
+              大概会。<span class="text-accent">但它已经留下了语法。</span>
+            </h2>
+            <p class="mt-4 max-w-xl text-[14px] leading-[1.9] text-ink-2">
+              奶蛙会像所有梗一样退潮。但“黄色 + 捧腹 + 无主”的配方已经写进了中文互联网的素材库：
+              下一只野生生物出现时，大家会更快地认出它、复制它、然后忘掉它。
+              这也是为什么，值得在它还热的时候，把来路记清楚。
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2 lg:justify-end">
+            <RouterLink to="/" class="n-btn n-btn-primary no-underline">🖼️ 去图片主页</RouterLink>
+            <RouterLink to="/studio" class="n-btn n-btn-outline no-underline">🎭 做张表情包</RouterLink>
+            <a href="#s05" class="n-btn n-btn-ghost no-underline">回到时间线 ↑</a>
+          </div>
+        </div>
+
+        <div class="mt-10 flex flex-col gap-2 border-t border-line pt-5 font-mono text-[9px] uppercase tracking-[0.14em] text-muted sm:flex-row sm:items-center sm:justify-between">
+          <span>Naiwa Archive · 非官方 · 非商用 · 2026</span>
+          <span>Written with sources, not with vibes.</span>
+        </div>
       </div>
-    </section>
+    </footer>
+
+    <!-- ============================== 灯箱 ============================== -->
+    <Teleport to="body">
+      <Transition name="lightbox">
+        <div
+          v-if="lightbox"
+          class="fixed inset-0 z-[120] flex items-center justify-center bg-[#14110d]/85 p-4 backdrop-blur-sm sm:p-8"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="lightbox.alt"
+          @click.self="closeLightbox"
+        >
+          <button
+            type="button"
+            class="absolute right-4 top-4 grid h-10 w-10 place-items-center rounded-full border border-paper/25 bg-paper/10 text-paper transition hover:bg-paper/20"
+            aria-label="关闭大图"
+            @click="closeLightbox"
+          >
+            ✕
+          </button>
+          <figure class="max-h-full w-full max-w-4xl overflow-auto rounded-2xl bg-surface p-2 shadow-2xl">
+            <img :src="lightbox.src" :alt="lightbox.alt" class="max-h-[76vh] w-full rounded-xl object-contain" />
+            <figcaption class="px-2 py-2 text-[11px] leading-relaxed text-muted">{{ lightbox.caption || lightbox.alt }}</figcaption>
+          </figure>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
+
+<style scoped>
+.lightbox-enter-active,
+.lightbox-leave-active {
+  transition: opacity 0.22s ease;
+}
+.lightbox-enter-active figure,
+.lightbox-leave-active figure {
+  transition: transform 0.26s var(--ease-out-expo);
+}
+.lightbox-enter-from,
+.lightbox-leave-to {
+  opacity: 0;
+}
+.lightbox-enter-from figure,
+.lightbox-leave-to figure {
+  transform: translateY(12px) scale(0.98);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lightbox-enter-active,
+  .lightbox-leave-active,
+  .lightbox-enter-active figure,
+  .lightbox-leave-active figure {
+    transition: none;
+  }
+}
+</style>
