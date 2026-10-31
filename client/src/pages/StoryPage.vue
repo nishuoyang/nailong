@@ -744,18 +744,18 @@ const marqueeItems = [...ticker, ...ticker]
 
           <div class="grid grid-cols-2 gap-3 self-start">
             <figure class="overflow-hidden rounded-[20px] border border-line bg-surface">
-              <button type="button" class="group relative block w-full" @click="openLightbox({ src: '/story/naiwa-laugh.jpg', alt: '奶蛙捧腹大笑', caption: '奶蛙捧腹大笑：二创视频最常见的收尾动作。' })">
-                <img src="/story/naiwa-laugh.jpg" alt="奶蛙捧腹大笑" class="aspect-[4/3] w-full object-cover transition duration-700 group-hover:scale-[1.03]" loading="lazy" decoding="async" />
+              <button type="button" class="group relative block w-full" @click="openLightbox({ src: '/story/naiwa-laugh-hd.jpg', alt: '奶蛙捧腹大笑', caption: '奶蛙捧腹大笑：二创视频最常见的收尾动作。' })">
+                <img src="/story/naiwa-laugh-hd.jpg" alt="奶蛙捧腹大笑" class="aspect-[4/3] w-full object-cover transition duration-700 group-hover:scale-[1.03]" loading="lazy" decoding="async" />
                 <span class="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full border border-white/30 bg-black/35 text-[10px] text-white opacity-0 backdrop-blur transition group-hover:opacity-100">⤢</span>
               </button>
               <figcaption class="px-3 py-2 text-[10px] leading-relaxed text-muted">捧腹大笑：所有二创共享的“收束动作”。</figcaption>
             </figure>
             <figure class="overflow-hidden rounded-[20px] border border-line bg-surface">
-              <button type="button" class="group relative block w-full" @click="openLightbox({ src: '/story/naiwa-squint.jpg', alt: '奶蛙斜视 meme', caption: '奶蛙斜视 meme：用“滑车神经麻痹”解释斜视，是“万物皆可学术化”的代表。' })">
-                <img src="/story/naiwa-squint.jpg" alt="奶蛙斜视 meme 与滑车神经示意图" class="aspect-[4/3] w-full object-cover transition duration-700 group-hover:scale-[1.03]" loading="lazy" decoding="async" />
+              <button type="button" class="group relative block w-full" @click="openLightbox({ src: '/story/naiwa-hospital.jpg', alt: '奶蛙住院 meme', caption: '奶蛙住院 meme：病房、护士、汗珠，把一只抽象蛙拍成了病历照。' })">
+                <img src="/story/naiwa-hospital.jpg" alt="奶蛙躺在病床上、护士在旁的住院梗图" class="aspect-[4/3] w-full object-cover transition duration-700 group-hover:scale-[1.03]" loading="lazy" decoding="async" />
                 <span class="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full border border-white/30 bg-black/35 text-[10px] text-white opacity-0 backdrop-blur transition group-hover:opacity-100">⤢</span>
               </button>
-              <figcaption class="px-3 py-2 text-[10px] leading-relaxed text-muted">斜视 meme：把怪相解释成医学图，是另一种“学术化”。</figcaption>
+              <figcaption class="px-3 py-2 text-[10px] leading-relaxed text-muted">住院梗：把奶蛙当成病人，是另一种“医学化”。</figcaption>
             </figure>
             <div class="col-span-2 rounded-[20px] border border-line bg-surface-2 p-4">
               <p class="font-mono text-[9px] uppercase tracking-[0.16em] text-muted">B 站数据 · 2026-10-31 核验</p>
@@ -794,7 +794,7 @@ const marqueeItems = [...ticker, ...ticker]
             </article>
             <article class="group overflow-hidden rounded-[22px] border border-line bg-surface">
               <div class="aspect-[16/10] overflow-hidden">
-                <img src="/story/naiwa-squint.jpg" alt="奶蛙斜视表情包" class="h-full w-full object-cover transition duration-700 group-hover:scale-105" loading="lazy" />
+                <img src="/story/naiwa-hospital.jpg" alt="奶蛙住院梗图" class="h-full w-full object-cover transition duration-700 group-hover:scale-105" loading="lazy" />
               </div>
               <div class="p-4">
                 <p class="font-mono text-[8px] uppercase tracking-[0.14em] text-jade">Branch 02</p>
@@ -847,7 +847,7 @@ const marqueeItems = [...ticker, ...ticker]
           <!-- 立牌 -->
           <div class="relative mx-auto w-full max-w-[340px] rotate-[-2deg]">
             <div class="rounded-[18px] border-2 border-ink bg-surface p-2.5 shadow-[8px_10px_0_0_rgba(24,21,16,.14)]">
-              <img src="/story/naiwa-laugh.jpg" alt="奶蛙立牌示意：捧腹大笑的奶蛙" class="aspect-[3/4] w-full rounded-[10px] object-cover" loading="lazy" />
+              <img src="/story/naiwa-laugh-hd.jpg" alt="奶蛙立牌示意：捧腹大笑的奶蛙" class="aspect-[3/4] w-full rounded-[10px] object-cover" loading="lazy" />
               <div class="flex items-center justify-between px-1 pt-2">
                 <p class="font-display text-[18px] leading-none text-ink">请把我搬到别处</p>
                 <span class="font-mono text-[8px] uppercase tracking-[0.14em] text-muted">Flow #042</span>
@@ -1107,7 +1107,7 @@ const marqueeItems = [...ticker, ...ticker]
             <div class="grid lg:grid-cols-[1.15fr_0.85fr]">
               <div class="relative aspect-video overflow-hidden bg-black">
                 <div class="pointer-events-none absolute inset-0">
-                  <img src="/story/naiwa-laugh.jpg" alt="" class="h-full w-full object-cover opacity-45" loading="lazy" />
+                  <img src="/story/naiwa-laugh-hd.jpg" alt="" class="h-full w-full object-cover opacity-45" loading="lazy" />
                   <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
                   <p class="absolute bottom-3 left-4 font-mono text-[9px] uppercase tracking-[0.14em] text-white/60">
                     Bilibili player · 若无法加载请点右侧「在 B 站打开」
