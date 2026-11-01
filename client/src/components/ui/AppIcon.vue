@@ -101,6 +101,7 @@ const icons: Record<string, IconDef> = {
   'minimize': ['M3 8h5V3', 'M21 8h-5V3', 'M3 16h5v5', 'M21 16h-5v5'],
   'smile': ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M8 14s1.5 2 4 2 4-2 4-2', 'M9 9h.01', 'M15 9h.01'],
   'flower': ['M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z', 'M12 9c0-3 2-4 3-3s0 3-3 3Z', 'M15 12c3 0 4 2 3 3s-3 0-3-3Z', 'M12 15c0 3-2 4-3 3s0-3 3-3Z', 'M9 12c-3 0-4-2-3-3s3 0 3 3Z'],
+  fish: ['M3 12c2.8-4 6.3-6 9.6-6 4 0 7 2.5 8.4 6-1.4 3.5-4.4 6-8.4 6C9.3 18 5.8 16 3 12Z', 'M3 12 1 9v6l2-3Z', 'M17.5 10.5h.01'],
 }
 
 const paths = computed<IconDef>(() => icons[props.name] ?? icons.sparkles)

@@ -18,6 +18,7 @@ const groups = [
   {
     title: '玩一玩',
     links: [
+      { label: '大肥鱼表情包', to: '/deepsea' },
       { label: '表情包工坊', to: '/studio' },
       { label: '奶蛙史', to: '/story' },
       { label: '投稿', to: '/upload' },

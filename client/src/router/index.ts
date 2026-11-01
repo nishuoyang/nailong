@@ -12,6 +12,7 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'home', component: () => import('@/pages/HomePage.vue'), meta: { title: '发现' } },
     { path: '/story', name: 'story', component: () => import('@/pages/StoryPage.vue'), meta: { title: '奶蛙史（奶娃史）' } },
+    { path: '/deepsea', name: 'deepsea', component: () => import('@/pages/DeepSeaPage.vue'), meta: { title: '大肥鱼表情包' } },
     { path: '/studio', name: 'studio', component: () => import('@/pages/StudioPage.vue'), meta: { title: '表情包工坊' } },
     { path: '/images/:id', name: 'image-detail', component: () => import('@/pages/ImageDetailPage.vue'), meta: { title: '图片' } },
     { path: '/featured', name: 'featured', component: () => import('@/pages/FeaturedPage.vue'), meta: { title: '精选推荐' } },

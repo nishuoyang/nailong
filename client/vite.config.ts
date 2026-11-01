@@ -36,6 +36,10 @@ export default defineConfig({
     },
   },
   server: {
+    // 编辑器/工具常把临时文件落在源码目录里，Windows 上被 watch 到会 EBUSY 崩溃。
+    watch: {
+      ignored: ['**/.*.tmpdir/**', '**/*.tmp'],
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

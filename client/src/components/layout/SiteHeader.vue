@@ -21,10 +21,19 @@ const userOpen = ref(false)
 const isApple = /Mac|iPhone|iPad|iPod/.test(`${navigator.platform} ${navigator.userAgent}`)
 const searchShortcut = isApple ? '⌘ K' : 'Ctrl K'
 
-const nav = [
+interface NavItem {
+  to: string
+  label: string
+  exact?: boolean
+  spark?: boolean
+  whale?: boolean
+}
+
+const nav: NavItem[] = [
   { to: '/', label: '发现', exact: true },
   { to: '/featured', label: '精选' },
   { to: '/collections', label: '收藏夹' },
+  { to: '/deepsea', label: '大肥鱼', whale: true },
   { to: '/studio', label: '工坊', spark: true },
   { to: '/story', label: '奶蛙史' },
 ]
@@ -86,13 +95,18 @@ function logout() {
               class="relative rounded-full px-3.5 py-2 text-[13px] font-medium no-underline transition-colors"
               :class="
                 (item.exact ? isExactActive : isActive)
-                  ? 'bg-ink text-paper'
-                  : 'text-ink-2 hover:bg-ink/[0.06] hover:text-ink'
+                  ? item.whale
+                    ? 'bg-[#4d6bfe] text-white shadow-[0_4px_14px_-6px_rgba(77,107,254,.8)]'
+                    : 'bg-ink text-paper'
+                  : item.whale
+                    ? 'text-[#2f46c4] hover:bg-[#4d6bfe]/10'
+                    : 'text-ink-2 hover:bg-ink/[0.06] hover:text-ink'
               "
               @click="navigate"
             >
               <span class="flex items-center gap-1.5">
-                <AppIcon v-if="item.spark" name="sparkles" :size="12" />
+                <AppIcon v-if="item.whale" name="fish" :size="14" />
+                <AppIcon v-else-if="item.spark" name="sparkles" :size="12" />
                 {{ item.label }}
               </span>
             </a>
