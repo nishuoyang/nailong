@@ -31,7 +31,8 @@ interface NavItem {
 
 const nav: NavItem[] = [
   { to: '/', label: '发现', exact: true },
-  { to: '/featured', label: '精选' },
+  { to: '/featured', label: '精选推荐' },
+  { to: '/other', label: '其他推荐' },
   { to: '/collections', label: '收藏夹' },
   { to: '/deepsea', label: '大肥鱼', whale: true },
   { to: '/studio', label: '工坊', spark: true },
@@ -82,7 +83,7 @@ function logout() {
         </RouterLink>
 
         <!-- Desktop nav -->
-        <nav class="ml-2 hidden items-center gap-0.5 lg:flex" aria-label="主导航">
+        <nav class="ml-2 hidden shrink-0 items-center gap-0.5 lg:flex" aria-label="主导航">
           <RouterLink
             v-for="item in nav"
             :key="item.to"
@@ -92,7 +93,7 @@ function logout() {
           >
             <a
               :href="href"
-              class="relative rounded-full px-3.5 py-2 text-[13px] font-medium no-underline transition-colors"
+              class="relative shrink-0 whitespace-nowrap rounded-full px-2.5 py-2 text-[13px] font-medium no-underline transition-colors xl:px-3.5"
               :class="
                 (item.exact ? isExactActive : isActive)
                   ? item.whale
@@ -113,10 +114,10 @@ function logout() {
           </RouterLink>
         </nav>
 
-        <div class="ml-auto flex items-center gap-1">
+        <div class="ml-auto flex shrink-0 items-center gap-1">
           <!-- Search trigger -->
           <button
-            class="hidden h-9 items-center gap-2 rounded-full border border-line/80 bg-paper/50 px-3 text-xs text-muted transition-all hover:border-ink hover:text-ink md:flex"
+            class="hidden h-9 items-center gap-2 rounded-full border border-line/80 bg-paper/50 px-3 text-xs text-muted transition-all hover:border-ink hover:text-ink xl:flex"
             :aria-label="`搜索（${searchShortcut}）`"
             @click="openPalette()"
           >
@@ -125,7 +126,7 @@ function logout() {
             <kbd class="whitespace-nowrap rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[9px] text-muted">{{ searchShortcut }}</kbd>
           </button>
           <button
-            class="grid h-9 w-9 place-items-center rounded-full text-ink-2 transition hover:bg-ink/[0.06] hover:text-ink md:hidden"
+            class="grid h-9 w-9 place-items-center rounded-full text-ink-2 transition hover:bg-ink/[0.06] hover:text-ink xl:hidden"
             aria-label="搜索"
             @click="openPalette()"
           >

@@ -10,7 +10,7 @@ const groups = [
     title: '逛一逛',
     links: [
       { label: '发现', to: '/' },
-      { label: '精选', to: '/featured' },
+      { label: '精选推荐', to: '/featured' },
       { label: '其他推荐', to: '/other' },
       { label: '收藏夹', to: '/collections' },
     ],

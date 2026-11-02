@@ -30,6 +30,7 @@ const allTags = ref<TagItem[]>([])
 const quick: Row[] = [
   { key: 'nav-home', label: '发现', hint: '首页', icon: 'home', to: '/' },
   { key: 'nav-featured', label: '精选推荐', hint: '管理员精选', icon: 'star', to: '/featured' },
+  { key: 'nav-other', label: '其他推荐', hint: '不务正业的副展厅', icon: 'globe', to: '/other' },
   { key: 'nav-collections', label: '收藏夹', hint: '主题合集', icon: 'folder', to: '/collections' },
   { key: 'nav-deepsea', label: '大肥鱼表情包', hint: '深度摸鱼', icon: 'fish', to: '/deepsea' },
   { key: 'nav-studio', label: '表情包工坊', hint: '三秒出片', icon: 'sparkles', to: '/studio' },
