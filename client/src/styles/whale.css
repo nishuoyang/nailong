@@ -998,6 +998,25 @@
   text-underline-offset: 3px;
 }
 
+/* 页脚里的行内按钮（投喂入口）：外观与链接一致 */
+.wh-wall__linkbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--wh-blue);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.wh-wall__linkbtn:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .wh-wall__sep {
   color: var(--wh-line-strong);
 }

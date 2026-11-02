@@ -21,6 +21,7 @@ import { FavoritesModule } from './favorites/favorites.module'
 import { CollectionsModule } from './collections/collections.module'
 import { FollowsModule } from './follows/follows.module'
 import { TagsModule } from './tags/tags.module'
+import { MemesModule } from './memes/memes.module'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard'
 import { RolesGuard } from './common/guards/roles.guard'
 import { ResponseInterceptor } from './common/interceptors/response.interceptor'
@@ -123,6 +124,7 @@ const staticImports = existsSync(clientDistPath)
     CollectionsModule,
     FollowsModule,
     TagsModule,
+    MemesModule,
     ...staticImports,
   ],
   controllers: [AppController],

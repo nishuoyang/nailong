@@ -31,6 +31,7 @@ const router = createRouter({
     { path: '/admin', name: 'admin-dashboard', component: () => import('@/pages/admin/DashboardPage.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: '管理概览' } },
     { path: '/admin/images', name: 'admin-images', component: () => import('@/pages/admin/ImageManagePage.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: '图片管理' } },
     { path: '/admin/comments', name: 'admin-comments', component: () => import('@/pages/admin/CommentManagePage.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: '评论管理' } },
+    { path: '/admin/memes', name: 'admin-memes', component: () => import('@/pages/admin/MemeManagePage.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: '表情包审核' } },
     { path: '/admin/bio-review', name: 'admin-bio-review', component: () => import('@/pages/admin/BioReviewPage.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: '简介审核' } },
     { path: '/admin/users', name: 'admin-users', component: () => import('@/pages/admin/UserManagePage.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: '用户管理' } },
     { path: '/admin/settings', name: 'admin-settings', component: () => import('@/pages/admin/SettingsPage.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: '站点设置' } },

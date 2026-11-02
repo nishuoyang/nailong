@@ -67,6 +67,26 @@ export class AdminController {
     return this.adminService.deleteImage(id)
   }
 
+  // ── 表情包审核（大肥鱼鱼塘）──
+  @Get('memes')
+  async getMemes(
+    @Query() query: PaginationDto,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.adminService.findAllMemes({ page: query.page, size: query.size, status, search })
+  }
+
+  @Patch('memes/:id/status')
+  async updateMemeStatus(@Param('id') id: string, @Body('status') status: string) {
+    return this.adminService.updateMemeStatus(id, status)
+  }
+
+  @Delete('memes/:id')
+  async deleteMeme(@Param('id') id: string) {
+    return this.adminService.deleteMeme(id)
+  }
+
   @Post('categories')
   async createCategory(@Body() body: { name: string; slug: string; description?: string }) {
     return this.adminService.createCategory(body)

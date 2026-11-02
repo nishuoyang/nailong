@@ -1,34 +1,57 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import MemeSticker from '@/components/whale/MemeSticker.vue'
+import MemeUploadModal from '@/components/whale/MemeUploadModal.vue'
 import MemeViewer from '@/components/whale/MemeViewer.vue'
+import { getMemes } from '@/api/memes'
 import {
-  WHALE_MEMES,
+  WHALE_MEMES_FALLBACK,
   WHALE_MOODS,
   WHALE_STATS,
   WHALE_TICKER,
   countByMood,
+  toWhaleMeme,
   type WhaleMeme,
   type WhaleMoodFilter,
 } from '@/data/whaleMemes'
+import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+import { useRouter } from 'vue-router'
 import '@/styles/whale.css'
+
+const authStore = useAuthStore()
+const toast = useToast()
+const router = useRouter()
+
+// 表情包列表：API 驱动（合集 100 张 + 审核通过的用户投喂）；接口不可用时退回内置精选
+const { data: apiMemes, isError } = useQuery({
+  queryKey: ['whale-memes'],
+  queryFn: () => getMemes({ size: 500 }).then((r) => r.data.data.map(toWhaleMeme)),
+  staleTime: 60_000,
+})
+
+const memes = computed<WhaleMeme[]>(() =>
+  apiMemes.value?.length ? apiMemes.value : WHALE_MEMES_FALLBACK,
+)
 
 const activeMood = ref<WhaleMoodFilter>('all')
 const keyword = ref('')
-const viewerPool = ref<WhaleMeme[]>(WHALE_MEMES)
+const viewerPool = ref<WhaleMeme[]>([])
 const viewerIndex = ref(-1)
+const uploadOpen = ref(false)
 
 const filtered = computed(() => {
   const term = keyword.value.trim().toLowerCase()
-  return WHALE_MEMES.filter((meme) => {
+  return memes.value.filter((meme) => {
     if (activeMood.value !== 'all' && meme.mood !== activeMood.value) return false
     if (!term) return true
     return [meme.title ?? '', meme.top, meme.bottom, meme.note, ...meme.tags].join(' ').toLowerCase().includes(term)
   })
 })
 
-const total = WHALE_MEMES.length
+const total = computed(() => memes.value.length)
 const tickerItems = computed(() => [...WHALE_TICKER, ...WHALE_TICKER])
 const bubbles = Array.from({ length: 14 }, (_, index) => ({
   left: `${(index * 7.3 + 4) % 96}%`,
@@ -39,18 +62,19 @@ const bubbles = Array.from({ length: 14 }, (_, index) => ({
 }))
 
 function countOf(mood: WhaleMoodFilter) {
-  return mood === 'all' ? total : countByMood(mood)
+  return mood === 'all' ? total.value : countByMood(memes.value, mood)
 }
 
 function openMeme(meme: WhaleMeme) {
-  const pool = filtered.value.length ? filtered.value : WHALE_MEMES
+  const pool = filtered.value.length ? filtered.value : memes.value
   const index = pool.findIndex((item) => item.id === meme.id)
-  viewerPool.value = index >= 0 ? pool : WHALE_MEMES
-  viewerIndex.value = index >= 0 ? index : WHALE_MEMES.findIndex((item) => item.id === meme.id)
+  viewerPool.value = index >= 0 ? pool : memes.value
+  viewerIndex.value = index >= 0 ? index : memes.value.findIndex((item) => item.id === meme.id)
 }
 
 function randomMeme() {
-  const pool = filtered.value.length ? filtered.value : WHALE_MEMES
+  const pool = filtered.value.length ? filtered.value : memes.value
+  if (!pool.length) return
   viewerPool.value = pool
   viewerIndex.value = Math.floor(Math.random() * pool.length)
 }
@@ -58,6 +82,15 @@ function randomMeme() {
 function clearFilters() {
   activeMood.value = 'all'
   keyword.value = ''
+}
+
+function openUpload() {
+  if (!authStore.isLoggedIn) {
+    toast.info('登录后才能投喂表情包')
+    router.push({ path: '/login', query: { redirect: '/deepsea' } })
+    return
+  }
+  uploadOpen.value = true
 }
 
 const depth = ref(0)
@@ -134,6 +167,10 @@ onBeforeUnmount(() => {
               <AppIcon name="dice" :size="16" />
               随机抽一张
             </button>
+            <button class="wh-btn wh-btn--ghost" type="button" @click="openUpload">
+              <AppIcon name="upload" :size="16" />
+              投喂一张
+            </button>
           </div>
 
           <div class="wh-hero__meta">
@@ -166,7 +203,7 @@ onBeforeUnmount(() => {
             <span class="wh-hero__nametag">大肥鱼 · 女仆形态</span>
           </button>
           <span class="wh-hero__tag wh-hero__tag--top">NEW<small>{{ total }}</small></span>
-          <span class="wh-hero__tag wh-hero__tag--side">16 张动图</span>
+          <span class="wh-hero__tag wh-hero__tag--side">{{ total }} 张动图</span>
           <div class="wh-hero__status">
             <span class="wh-hero__dot" />
             <div>
@@ -260,10 +297,19 @@ onBeforeUnmount(() => {
             <AppIcon name="dice" :size="15" />
             随机
           </button>
+          <button class="wh-random" type="button" @click="openUpload">
+            <AppIcon name="upload" :size="15" />
+            投喂一张
+          </button>
         </div>
       </div>
 
-      <div v-if="filtered.length" class="wh-grid" :key="activeMood">
+      <div v-if="!apiMemes && !isError" class="wh-empty">
+        <span class="wh-empty__glyph">≈</span>
+        <p>鱼群正在游过来……</p>
+      </div>
+
+      <div v-else-if="filtered.length" class="wh-grid" :key="activeMood">
         <MemeSticker
           v-for="(meme, index) in filtered"
           :key="meme.id"
@@ -275,16 +321,22 @@ onBeforeUnmount(() => {
 
       <div v-else class="wh-empty">
         <span class="wh-empty__glyph">( *・ω・)ﾉ</span>
-        <p>这条鱼今天没上班，换个词再捞一次。</p>
+        <p v-if="isError">鱼塘接口打了个盹，先看看内置精选。或者清空筛选再捞一次。</p>
+        <p v-else>这条鱼今天没上班，换个词再捞一次。</p>
         <button class="wh-btn wh-btn--blue" type="button" @click="clearFilters">清空筛选</button>
       </div>
 
       <p class="wh-wall__foot">
         <span>还有想看的梗？</span>
         <a href="https://github.com/diwer/ai-biaoqingbao" target="_blank" rel="noopener">
-          看完整的 100 个 GIF
+          去合集源头看看
           <AppIcon name="arrow-up-right" :size="12" />
         </a>
+        <span class="wh-wall__sep">·</span>
+        <button type="button" class="wh-wall__linkbtn" @click="openUpload">
+          投喂一张，让它游进鱼塘
+          <AppIcon name="arrow-up-right" :size="12" />
+        </button>
         <span class="wh-wall__sep">·</span>
         <RouterLink to="/studio">去表情包工坊，自己画一条 <AppIcon name="arrow-up-right" :size="12" /></RouterLink>
       </p>
@@ -297,12 +349,16 @@ onBeforeUnmount(() => {
         <div class="wh-cta__copy">
           <span class="wh-eyebrow wh-eyebrow--light">MAKE YOUR OWN · 继续增肥</span>
           <h2>这条鱼，还能再长。</h2>
-          <p>把大肥鱼贴到你自己的图上，加两行字，三秒就能做出一张新的表情包。或者，先去看看那条蛙的故事。</p>
+          <p>把大肥鱼贴到你自己的图上，加两行字，三秒就能做出一张新的表情包。或者，把相册里那张压箱底的 GIF 投喂进来。或者，先去看看那条蛙的故事。</p>
           <div class="wh-cta__actions">
             <RouterLink class="wh-btn wh-btn--sun" to="/studio">
               去表情包工坊
               <AppIcon name="arrow-right" :size="16" />
             </RouterLink>
+            <button class="wh-btn wh-btn--ghost" type="button" @click="openUpload">
+              <AppIcon name="upload" :size="16" />
+              投喂一张
+            </button>
             <RouterLink class="wh-btn wh-btn--ghost" to="/story">看看奶蛙史</RouterLink>
           </div>
         </div>
@@ -316,9 +372,9 @@ onBeforeUnmount(() => {
       <p class="wh-disclaimer">
         「大肥鱼」是网友对 DeepSeek 蓝鲸 Logo 的昵称，最初来自一次「这是蓝色大肥鱼」的识图乌龙。
         鲸鱼娘原型为<strong>上善无形</strong>的原创 OC「溟月」；女仆鲸鱼娘由<strong>ZipZipPipe</strong>二次设计；Q 版形象由<strong>这个刀子真甜</strong>扩散。
-        相关形象以 CC BY-NC-SA 4.0 开放二创。本页 16 张动图来自 <strong>ming</strong> 整理的
-        <a href="https://github.com/diwer/ai-biaoqingbao" target="_blank" rel="noopener">「大肥鱼表情包 · 100 个中文 GIF」合集</a>；
-        该合集注明部分参考图权属仍在核实。本页仅作非商业同人展示，与 DeepSeek 官方无关；如权利人要求会立即下架。
+        相关形象以 CC BY-NC-SA 4.0 开放二创。本鱼塘收录 <strong>ming</strong> 整理的
+        <a href="https://github.com/diwer/ai-biaoqingbao" target="_blank" rel="noopener">「大肥鱼表情包 · 100 个中文 GIF」合集</a>
+        全量条目，以及通过审核的用户投喂；该合集注明部分参考图权属仍在核实。本页仅作非商业同人展示，与 DeepSeek 官方无关；如权利人要求会立即下架。
       </p>
     </section>
 
@@ -347,5 +403,7 @@ onBeforeUnmount(() => {
       @close="viewerIndex = -1"
       @update:index="viewerIndex = $event"
     />
+
+    <MemeUploadModal v-model="uploadOpen" />
   </div>
 </template>

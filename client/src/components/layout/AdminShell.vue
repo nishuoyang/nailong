@@ -25,6 +25,7 @@ const nav = computed(() => [
   { to: '/admin', label: '概览', icon: 'layout', exact: true },
   { to: '/admin/images', label: '图片', icon: 'image', badge: stats.value?.pending },
   { to: '/admin/comments', label: '评论', icon: 'comment', badge: stats.value?.comments },
+  { to: '/admin/memes', label: '表情包', icon: 'star', badge: stats.value?.memePending },
   { to: '/admin/bio-review', label: '简介审核', icon: 'user' },
   { to: '/admin/users', label: '用户', icon: 'users' },
   { to: '/admin/categories', label: '分类', icon: 'grid' },

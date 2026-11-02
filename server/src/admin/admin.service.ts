@@ -65,7 +65,7 @@ export class AdminService {
   async stats() {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    const [pending, approved, rejected, offline, users, comments, collections, favorites, todayUploads, agg] =
+    const [pending, approved, rejected, offline, users, comments, collections, favorites, todayUploads, memePending, agg] =
       await Promise.all([
         this.prisma.image.count({ where: { status: 'pending' } }),
         this.prisma.image.count({ where: { status: 'approved' } }),
@@ -76,6 +76,7 @@ export class AdminService {
         this.prisma.collection.count(),
         this.prisma.favorite.count(),
         this.prisma.image.count({ where: { createdAt: { gte: today } } }),
+        this.prisma.meme.count({ where: { status: 'pending' } }),
         this.prisma.image.aggregate({
           _sum: { likeCount: true, viewCount: true, downloadCount: true },
         }),
@@ -91,6 +92,7 @@ export class AdminService {
       collections,
       favorites,
       todayUploads,
+      memePending,
       likes: agg._sum.likeCount ?? 0,
       views: agg._sum.viewCount ?? 0,
       downloads: agg._sum.downloadCount ?? 0,
@@ -270,6 +272,86 @@ export class AdminService {
     await this.prisma.image.delete({ where: { id } })
     // 删除时清除每日推荐缓存
     await this.redisService.del('daily_recommendation')
+    return { message: '删除成功' }
+  }
+
+  // ────────────────────────── 表情包审核（大肥鱼鱼塘）──────────────────────────
+
+  async findAllMemes(params: { page?: number; size?: number; status?: string; search?: string }) {
+    const page = parsePage(params.page)
+    const size = parseSize(params.size)
+    const { status, search } = params
+
+    const where: any = {}
+    if (status) where.status = status
+    if (search) {
+      where.OR = [
+        { title: { contains: search } },
+        { note: { contains: search } },
+        { code: { contains: search } },
+        { user: { username: { contains: search } } },
+      ]
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.meme.findMany({
+        where,
+        include: { user: { select: { id: true, username: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * size,
+        take: size,
+      }),
+      this.prisma.meme.count({ where }),
+    ])
+
+    return {
+      data: data.map((meme) => ({ ...meme, tags: meme.tags ? meme.tags.split(',') : [] })),
+      meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 },
+    }
+  }
+
+  /**
+   * 表情包状态机，与图片一致：
+   * pending → approved/rejected；approved → offline（下架）；offline → approved（重新上架）。
+   */
+  async updateMemeStatus(id: string, status: string) {
+    const validStatuses = ['pending', 'approved', 'rejected', 'offline']
+    if (!validStatuses.includes(status)) {
+      throw new BadRequestException('无效的状态值')
+    }
+
+    const meme = await this.prisma.meme.findUnique({ where: { id } })
+    if (!meme) throw new NotFoundException('表情包不存在')
+
+    const allowedTransitions: Record<string, string[]> = {
+      pending: ['approved', 'rejected'],
+      approved: ['offline'],
+      rejected: [],
+      offline: ['approved'],
+    }
+    const allowed = allowedTransitions[meme.status]
+    if (!allowed || !allowed.includes(status)) {
+      throw new BadRequestException(`不允许从 "${meme.status}" 转换为 "${status}"`)
+    }
+
+    return this.prisma.meme.update({ where: { id }, data: { status } })
+  }
+
+  /** 删除表情包：用户投喂的连带清 MinIO 对象；合集归档指向客户端静态资源，不动文件。 */
+  async deleteMeme(id: string) {
+    const meme = await this.prisma.meme.findUnique({ where: { id } })
+    if (!meme) throw new NotFoundException('表情包不存在')
+
+    if (meme.source === 'user') {
+      try {
+        const filename = meme.url.split('/').pop()
+        if (filename) await this.minioService.removeObject(filename)
+      } catch {
+        // MinIO 删除失败不阻塞数据库删除（与 deleteImage 同策略）
+      }
+    }
+
+    await this.prisma.meme.delete({ where: { id } })
     return { message: '删除成功' }
   }
 

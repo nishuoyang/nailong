@@ -27,6 +27,7 @@ model User {
   collections Collection[]
   following   Follow[]     @relation("Follower")
   followers   Follow[]     @relation("Following")
+  memes       Meme[]
 
   // 后台用户列表：无过滤 + ORDER BY created_at DESC
   @@index([createdAt])
@@ -256,4 +257,43 @@ model Follow {
   @@unique([followerId, followingId])
   @@index([followingId, createdAt])
   @@index([followerId, createdAt])
+}
+
+/// 表情包（大肥鱼鱼塘）：与 Image 分开建模。
+///
+/// 为什么不复用 Image：表情包没有分类/点赞/收藏/评论等社区关系，却有
+/// 「情绪鱼塘」（mood）这类展示维度和「合集归档 / 用户投喂」（source）的来源区分，
+/// 塞进 Image 会多出一堆用不到的列和状态。展示页（/deepsea）也只认 5 类情绪。
+///
+/// code 是稳定短标识（合集条目沿用 gif-NNN，与旧前端静态 id 一致；用户上传生成 up-xxxx），
+/// 保证旧链接/旧引用继续可读。status 状态机与 Image 相同：
+/// pending → approved/rejected；approved ↔ offline（下架/上架）。
+///
+/// url 按「存储透明」惯例只存字符串：合集条目指向客户端静态目录（/whale/memes/NNN.gif），
+/// 用户上传指向 MinIO（/minio/<bucket>/<name>），换存储不改 schema。
+model Meme {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  title     String
+  note      String?
+  /// 情绪鱼塘：fish/work/break/night/cute（前端 WhaleMood 同一取值域）
+  mood      String   @default("fish")
+  /// 逗号分隔标签（展示用，量小不建关联表）
+  tags      String   @default("")
+  url       String
+  status    String   @default("pending")
+  /// archive = 合集归档（ming 账号）；user = 用户投喂
+  source    String   @default("user")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 鱼塘列表：WHERE status='approved' ORDER BY created_at DESC / id
+  @@index([status, createdAt])
+  // 情绪筛选：WHERE status=? AND mood=?
+  @@index([status, mood])
+  // 我的投喂 + 每日上传配额：WHERE user_id=? AND created_at>=?
+  @@index([userId, createdAt])
 }

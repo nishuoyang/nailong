@@ -1,6 +1,12 @@
 /**
  * 大肥鱼表情包档案馆 · 数据
  *
+ * 【2026-11 改造】表情包列表改为 API 驱动（GET /api/memes，见 api/memes.ts），
+ * 本文件保留类型定义、情绪鱼塘元数据与离线兜底数据：
+ *  - WHALE_MEMES_FALLBACK：最初的 16 张精选（接口不可用时兜底展示，保证页面可用）
+ *  - toWhaleMeme()：API 条目 → WhaleMeme 适配（保持 MemeSticker/MemeViewer 协议不变）
+ * 合集 100 张与用户投喂均落库（server/src/memes），上传后经管理员审核进鱼塘。
+ *
  * 这 16 张动图来自 ming 整理的「大肥鱼表情包 · 100 个中文 GIF」合集
  * （github.com/diwer/ai-biaoqingbao），已按情绪重新挑选、归档。
  * 基础鲸鱼娘角色：上善无形「溟月」；女仆版二次设计：ZipZipPipe；
@@ -9,6 +15,8 @@
  *
  * 题图与全身立绘由用户提供。页面只做非商业同人展示。
  */
+
+import type { MemeItem } from '@/api/memes'
 
 export type WhaleMood = 'fish' | 'work' | 'break' | 'night' | 'cute'
 
@@ -49,6 +57,7 @@ export type WhaleScene =
 export type WhaleTone = 'sky' | 'ice' | 'peri' | 'mint' | 'pink' | 'sand' | 'night'
 
 export interface WhaleMeme {
+  /** 稳定短标识：合集条目沿用 gif-NNN（与旧静态 id 一致），用户投喂为 up-xxxx */
   id: string
   /** 动图标题（图上的文字） */
   title?: string
@@ -62,9 +71,9 @@ export interface WhaleMeme {
   tags: string[]
   /** 无障碍描述，也是灯箱里的一句话注解 */
   note: string
-  /** 动图预览（240px 动态 WebP，列表用） */
+  /** 动图预览（列表用；合集条目与 full 同一 GIF） */
   image?: string
-  /** 高清原图（512px GIF，灯箱/下载用） */
+  /** 高清原图（灯箱/下载用） */
   full?: string
 }
 
@@ -84,7 +93,11 @@ export const WHALE_MOODS: WhaleMoodMeta[] = [
   { key: 'cute', label: '可爱', glyph: '♥', blurb: '本质是卖萌' },
 ]
 
-export const WHALE_MEMES: WhaleMeme[] = [
+/**
+ * 离线兜底：最初的 16 张精选（API 不可用时仍能展示，保证页面可用）。
+ * 正常情况走 GET /api/memes（合集 100 张 + 审核通过的用户投喂）。
+ */
+export const WHALE_MEMES_FALLBACK: WhaleMeme[] = [
   {
     id: 'gif-064',
     title: '摸鱼中',
@@ -312,7 +325,7 @@ export const WHALE_MEMES: WhaleMeme[] = [
 ]
 
 export const WHALE_STATS = [
-  { value: '16', unit: '张', label: '在册表情' },
+  { value: '100', unit: '张', label: '在册表情' },
   { value: '05', unit: '类', label: '情绪鱼塘' },
   { value: '∞', unit: '碗', label: '白米饭额度' },
   { value: '100', unit: '%', label: '内心戏浓度' },
@@ -341,12 +354,32 @@ export const WHALE_TONES: Record<WhaleTone, { from: string; to: string; accent: 
   night: { from: '#0B1B4D', to: '#26409C', accent: '#7FE3FF', night: true },
 }
 
-export function memesByMood(mood: WhaleMoodFilter): WhaleMeme[] {
-  return mood === 'all' ? WHALE_MEMES : WHALE_MEMES.filter((meme) => meme.mood === mood)
+/** API 条目 → WhaleMeme：保持 MemeSticker/MemeViewer 的展示协议不变 */
+export function toWhaleMeme(item: MemeItem): WhaleMeme {
+  const mood = (WHALE_MOODS.some((m) => m.key === item.mood) ? item.mood : 'fish') as WhaleMood
+  return {
+    id: item.code,
+    title: item.title,
+    top: item.title,
+    bottom: item.note ?? '',
+    mood,
+    // 矢量画法只给无图条目兜底；API 条目都有 GIF，这里填中性默认值
+    scene: 'float',
+    expression: 'happy',
+    tone: mood === 'night' ? 'night' : 'sky',
+    tags: item.tags.length ? item.tags : ['表情'],
+    note: item.note ?? item.title,
+    image: item.url,
+    full: item.url,
+  }
 }
 
-export function countByMood(mood: WhaleMood): number {
-  return WHALE_MEMES.filter((meme) => meme.mood === mood).length
+export function memesByMood(memes: WhaleMeme[], mood: WhaleMoodFilter): WhaleMeme[] {
+  return mood === 'all' ? memes : memes.filter((meme) => meme.mood === mood)
+}
+
+export function countByMood(memes: WhaleMeme[], mood: WhaleMood): number {
+  return memes.filter((meme) => meme.mood === mood).length
 }
 
 export function captionOf(meme: WhaleMeme): string {

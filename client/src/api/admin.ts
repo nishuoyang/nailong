@@ -11,6 +11,7 @@ export interface AdminStats {
   collections: number
   favorites: number
   todayUploads: number
+  memePending: number
   likes: number
   views: number
   downloads: number
@@ -87,6 +88,39 @@ export function updateCategory(id: string, data: { name?: string; slug?: string;
 
 export function deleteCategory(id: string) {
   return request.delete(`/admin/categories/${id}`)
+}
+
+// ── 表情包审核（大肥鱼鱼塘）──
+
+export interface AdminMemeItem {
+  id: string
+  code: string
+  title: string
+  note: string | null
+  mood: string
+  tags: string[]
+  url: string
+  status: string
+  source: string
+  userId: string
+  createdAt: string
+  user?: { id: string; username: string }
+}
+
+export function getAdminMemes(params: { page?: number; size?: number; status?: string; search?: string }) {
+  return request.get<{
+    code: number
+    data: AdminMemeItem[]
+    meta: PaginatedResponse<AdminMemeItem>['meta']
+  }>('/admin/memes', { params })
+}
+
+export function updateMemeStatus(id: string, status: string) {
+  return request.patch(`/admin/memes/${id}/status`, { status })
+}
+
+export function deleteAdminMeme(id: string) {
+  return request.delete(`/admin/memes/${id}`)
 }
 
 export type { TagItem }
