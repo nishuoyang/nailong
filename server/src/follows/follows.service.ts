@@ -109,6 +109,8 @@ export class FollowsService {
     const sizeNum = parseSize(size)
     const where = {
       status: 'approved',
+      // 动态流按投稿折叠：一批多图只推一张（封面）
+      batchIndex: 0,
       user: { followers: { some: { followerId: userId } } },
     }
 

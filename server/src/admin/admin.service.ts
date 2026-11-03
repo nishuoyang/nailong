@@ -4,6 +4,7 @@ import { MinioService } from '../minio/minio.service'
 import { RedisService } from '../redis/redis.service'
 import { ensureTags } from '../common/utils/tags'
 import { cleanText } from '../common/utils/text'
+import { PUBLIC_IMAGE_PIVOT_WHERE } from '../common/constants/image-visibility'
 
 function parsePage(page?: number): number {
   const p = Number(page)
@@ -27,7 +28,11 @@ export class AdminService {
     const size = parseSize(params.size)
     const { status, search } = params
 
-    const where: any = {}
+    const where: any = {
+      // 审核列表按投稿折叠：一次投稿只出现一条（封面），通过/拒绝作用于整批。
+      // 存量单图数据 batchIndex 默认 0，不受影响。
+      batchIndex: 0,
+    }
     if (status) where.status = status
     if (search) {
       where.OR = [
@@ -67,15 +72,17 @@ export class AdminService {
     today.setHours(0, 0, 0, 0)
     const [pending, approved, rejected, offline, users, comments, collections, favorites, todayUploads, memePending, agg] =
       await Promise.all([
-        this.prisma.image.count({ where: { status: 'pending' } }),
-        this.prisma.image.count({ where: { status: 'approved' } }),
-        this.prisma.image.count({ where: { status: 'rejected' } }),
-        this.prisma.image.count({ where: { status: 'offline' } }),
+        // 统计口径与列表一致：都以「投稿批次」为单位（封面那张），
+        // 否则待审核数是 9、点进去只有 1 条，对不上。
+        this.prisma.image.count({ where: { status: 'pending', batchIndex: 0 } }),
+        this.prisma.image.count({ where: { status: 'approved', batchIndex: 0 } }),
+        this.prisma.image.count({ where: { status: 'rejected', batchIndex: 0 } }),
+        this.prisma.image.count({ where: { status: 'offline', batchIndex: 0 } }),
         this.prisma.user.count(),
         this.prisma.comment.count(),
         this.prisma.collection.count(),
         this.prisma.favorite.count(),
-        this.prisma.image.count({ where: { createdAt: { gte: today } } }),
+        this.prisma.image.count({ where: { createdAt: { gte: today }, batchIndex: 0 } }),
         this.prisma.meme.count({ where: { status: 'pending' } }),
         this.prisma.image.aggregate({
           _sum: { likeCount: true, viewCount: true, downloadCount: true },
@@ -164,13 +171,17 @@ export class AdminService {
       )
     }
 
-    const updated = await this.prisma.image.update({
-      where: { id },
+    // 一次投稿是一个整体：审核/上下架作用于整批，否则会出现
+    // 「封面通过了、同批第 2 张还在待审」这种自相矛盾的状态。
+    const updated = await this.prisma.image.updateMany({
+      where: image.batchId
+        ? { batchId: image.batchId, status: image.status }
+        : { id, status: image.status },
       data: { status: status as any },
     })
     // 状态变更时清除每日推荐缓存
     await this.redisService.del('daily_recommendation')
-    return updated
+    return { id, status, affected: updated.count }
   }
 
   async toggleFeatured(id: string) {
@@ -209,17 +220,34 @@ export class AdminService {
     // unique constraints and is safe to run idempotently.
     const tagRows = data.tagNames !== undefined ? await ensureTags(this.prisma, data.tagNames) : null
 
+    // 同一批次的图共享标题/描述/分类/标签/板块，编辑一次要整批同步，
+    // 否则详情页左右翻动时右侧信息会突然变一套。
+    const siblingIds = image.batchId
+      ? (
+          await this.prisma.image.findMany({
+            where: { batchId: image.batchId },
+            select: { id: true },
+          })
+        ).map((row) => row.id)
+      : [id]
+    const otherIds = siblingIds.filter((sid) => sid !== id)
+
     return this.prisma.$transaction(async (tx) => {
+      const scalarData = {
+        ...(data.title !== undefined ? { title: cleanText(data.title, 255) } : {}),
+        ...(data.description !== undefined
+          ? { description: cleanText(data.description, 500) || null }
+          : {}),
+        ...(data.section !== undefined ? { section: data.section } : {}),
+      }
+
       const updated = await tx.image.update({
         where: { id },
-        data: {
-          ...(data.title !== undefined ? { title: cleanText(data.title, 255) } : {}),
-          ...(data.description !== undefined
-            ? { description: cleanText(data.description, 500) || null }
-            : {}),
-          ...(data.section !== undefined ? { section: data.section } : {}),
-        },
+        data: scalarData,
       })
+      if (otherIds.length) {
+        await tx.image.updateMany({ where: { id: { in: otherIds } }, data: scalarData })
+      }
 
       // 可选：更新图片分类
       if (data.categoryIds !== undefined) {
@@ -229,19 +257,23 @@ export class AdminService {
         if (count !== data.categoryIds.length) {
           throw new BadRequestException('存在无效的分类')
         }
-        await tx.imagesOnCategories.deleteMany({ where: { imageId: id } })
+        await tx.imagesOnCategories.deleteMany({ where: { imageId: { in: siblingIds } } })
         if (data.categoryIds.length > 0) {
           await tx.imagesOnCategories.createMany({
-            data: data.categoryIds.map((categoryId) => ({ imageId: id, categoryId })),
+            data: siblingIds.flatMap((imageId) =>
+              data.categoryIds!.map((categoryId) => ({ imageId, categoryId })),
+            ),
           })
         }
       }
 
       if (tagRows) {
-        await tx.imageTag.deleteMany({ where: { imageId: id } })
+        await tx.imageTag.deleteMany({ where: { imageId: { in: siblingIds } } })
         if (tagRows.length > 0) {
           await tx.imageTag.createMany({
-            data: tagRows.map((tag) => ({ imageId: id, tagId: tag.id })),
+            data: siblingIds.flatMap((imageId) =>
+              tagRows.map((tag) => ({ imageId, tagId: tag.id })),
+            ),
           })
         }
       }
@@ -254,25 +286,38 @@ export class AdminService {
     const image = await this.prisma.image.findUnique({ where: { id } })
     if (!image) throw new NotFoundException('图片不存在')
 
+    // 一次投稿整批删除：只删其中一张会留下「封面没了、其余还在」的残批次，
+    // 而且列表按 batchIndex=0 折叠后就再也看不到剩下的图。
+    const targets = image.batchId
+      ? await this.prisma.image.findMany({
+          where: { batchId: image.batchId },
+          select: { url: true, thumbnailUrl: true, thumbnailSmUrl: true },
+        })
+      : [image]
+
     // 从 MinIO 删除所有关联文件
-    const urls = [image.url, image.thumbnailUrl, image.thumbnailSmUrl]
-    for (const url of urls) {
-      if (!url) continue
-      try {
-        const parts = url.split('/')
-        const filename = parts[parts.length - 1]
-        if (filename) {
-          await this.minioService.removeObject(filename)
+    for (const target of targets) {
+      const urls = [target.url, target.thumbnailUrl, target.thumbnailSmUrl]
+      for (const url of urls) {
+        if (!url) continue
+        try {
+          const parts = url.split('/')
+          const filename = parts[parts.length - 1]
+          if (filename) {
+            await this.minioService.removeObject(filename)
+          }
+        } catch {
+          // MinIO 删除失败不阻塞数据库删除
         }
-      } catch {
-        // MinIO 删除失败不阻塞数据库删除
       }
     }
 
-    await this.prisma.image.delete({ where: { id } })
+    await this.prisma.image.deleteMany({
+      where: image.batchId ? { batchId: image.batchId } : { id },
+    })
     // 删除时清除每日推荐缓存
     await this.redisService.del('daily_recommendation')
-    return { message: '删除成功' }
+    return { message: targets.length > 1 ? `已删除 ${targets.length} 张` : '删除成功' }
   }
 
   // ────────────────────────── 表情包审核（大肥鱼鱼塘）──────────────────────────
@@ -353,6 +398,37 @@ export class AdminService {
 
     await this.prisma.meme.delete({ where: { id } })
     return { message: '删除成功' }
+  }
+
+  /**
+   * 后台分类列表：同时给出「公开可见数」和「全量关联数」。
+   *
+   * 公开数用于对齐发现页筛选条；全量数包含待审核 / 已下架 / 其他推荐的图片，
+   * 与 deleteCategory 的拦截条件一致。两者分开显示，才不会出现
+   * 「页面上写 0 张，删除却提示还有 3 张」。
+   */
+  async listCategories() {
+    const [rows, totalCounts, publicCounts] = await Promise.all([
+      this.prisma.category.findMany({ orderBy: { name: 'asc' } }),
+      this.prisma.imagesOnCategories.groupBy({
+        by: ['categoryId'],
+        _count: { _all: true },
+      }),
+      this.prisma.imagesOnCategories.groupBy({
+        by: ['categoryId'],
+        where: PUBLIC_IMAGE_PIVOT_WHERE,
+        _count: { _all: true },
+      }),
+    ])
+
+    const totalMap = new Map(totalCounts.map((row) => [row.categoryId, row._count._all]))
+    const publicMap = new Map(publicCounts.map((row) => [row.categoryId, row._count._all]))
+
+    return rows.map((category) => ({
+      ...category,
+      count: publicMap.get(category.id) ?? 0,
+      totalCount: totalMap.get(category.id) ?? 0,
+    }))
   }
 
   async createCategory(data: { name: string; slug: string; description?: string }) {

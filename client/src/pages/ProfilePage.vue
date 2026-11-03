@@ -15,6 +15,7 @@ import type { ImageItem } from '@/api/images'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import ProfileHeader from '@/components/common/ProfileHeader.vue'
+import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import ImageGrid from '@/components/common/ImageGrid.vue'
 import CollectionCard from '@/components/common/CollectionCard.vue'
 import CollectionFormModal from '@/components/common/CollectionFormModal.vue'
@@ -75,7 +76,41 @@ const favoriteTotal = computed(() => favoritePages.value?.pages[0]?.meta.total ?
 
 const showBio = ref(false)
 const showCreate = ref(false)
+const showAvatar = ref(false)
 const bioText = ref('')
+
+/** 头像弹窗里展示的当前头像（与已保存值同步） */
+const currentAvatarUrl = computed(() => me.value?.avatarUrl ?? null)
+
+/**
+ * 头像变更后同步所有用到头像的地方：
+ *  - auth store：顶部导航的小头像
+ *  - ['me']：本页顶部的大头像
+ *  - ['user-profile', id]：公开主页
+ *  - ['my-images']：我的作品列表里每张图上的作者头像
+ *
+ * 先用 setQueryData 立刻改本地缓存（不等网络），再 invalidate 拉一次权威值。
+ */
+function applyAvatar(avatarUrl: string | null) {
+  if (auth.user) auth.setUser({ ...auth.user, avatarUrl })
+  queryClient.setQueryData(['me'], (old: any) => (old ? { ...old, avatarUrl } : old))
+  queryClient.setQueryData(['user-profile', userId.value], (old: any) =>
+    old ? { ...old, avatarUrl } : old,
+  )
+  queryClient.invalidateQueries({ queryKey: ['me'] })
+  queryClient.invalidateQueries({ queryKey: ['user-profile', userId.value] })
+  queryClient.invalidateQueries({ queryKey: ['my-images'] })
+}
+
+function onAvatarUploaded(url: string) {
+  applyAvatar(url)
+  showAvatar.value = false
+}
+
+function onAvatarRemoved() {
+  applyAvatar(null)
+  showAvatar.value = false
+}
 
 const bioMutation = useMutation({
   mutationFn: (bio: string) => updateBio(bio),
@@ -115,7 +150,8 @@ function onCollectionSaved(collection: CollectionSummary) {
   <div>
     <ProfileHeader
       :name="me?.username"
-      :avatar-url="me?.avatarUrl"
+      :avatar-url="currentAvatarUrl"
+      avatar-editable
       :bio="me?.bio"
       :bio-pending="me?.bioStatus === 'pending'"
       :role="me?.role"
@@ -124,6 +160,7 @@ function onCollectionSaved(collection: CollectionSummary) {
       :followers="profile?.followerCount ?? 0"
       :following="profile?.followingCount ?? 0"
       :likes="profile?.totalLikes ?? 0"
+      @edit-avatar="showAvatar = true"
     >
       <template #under-bio>
         <p class="mt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">{{ me?.email }}</p>
@@ -215,6 +252,20 @@ function onCollectionSaved(collection: CollectionSummary) {
         <UiButton variant="ghost" @click="showBio = false">取消</UiButton>
         <UiButton variant="primary" :loading="bioMutation.isPending.value" @click="saveBio">保存</UiButton>
       </div>
+    </UiModal>
+
+    <UiModal v-model="showAvatar" title="修改头像" width="620px">
+      <template #subtitle>
+        <p class="mt-1 text-[11px] leading-relaxed text-muted">
+          支持 JPEG / PNG / WebP，不超过 2MB。上传后会自动裁成方形并立即生效。
+        </p>
+      </template>
+      <AvatarUploader
+        :current-url="currentAvatarUrl"
+        :name="me?.username"
+        @uploaded="onAvatarUploaded"
+        @removed="onAvatarRemoved"
+      />
     </UiModal>
 
     <CollectionFormModal v-model="showCreate" @saved="onCollectionSaved" />

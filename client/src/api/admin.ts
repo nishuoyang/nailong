@@ -78,6 +78,22 @@ export function deleteAdminComment(id: string) {
   return request.delete(`/admin/comments/${id}`)
 }
 
+export interface AdminCategory {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  createdAt: string
+  /** 公开可见（approved + general），与发现页筛选条口径一致 */
+  count: number
+  /** 全量关联（含待审核 / 已下架 / 其他推荐），与删除拦截口径一致 */
+  totalCount: number
+}
+
+export function getAdminCategories() {
+  return request.get<{ code: number; data: AdminCategory[] }>('/admin/categories')
+}
+
 export function createCategory(data: { name: string; slug: string; description?: string }) {
   return request.post('/admin/categories', data)
 }

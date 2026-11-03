@@ -192,9 +192,9 @@ defineExpose({ focus: () => inputRef.value?.focus() })
 
 <template>
   <Teleport to="body">
-    <Transition name="palette">
+    <Transition name="palette" :duration="{ enter: 360, leave: 360 }">
       <div v-if="isOpen" class="fixed inset-0 z-[110] flex items-start justify-center px-4 pt-[10vh] sm:pt-[12vh]" @keydown="onKeydown">
-        <div class="absolute inset-0 bg-[#15110b]/50 backdrop-blur-md" @click="close" />
+        <div class="n-palette-scrim absolute inset-0" @click="close" />
         <div class="relative w-full max-w-[640px] overflow-hidden rounded-[26px] border border-ink/20 bg-surface shadow-[0_40px_120px_-25px_rgba(20,15,8,.7)]">
           <div class="flex items-center gap-3 border-b border-line px-5 py-4">
             <AppIcon name="search" :size="19" class="text-accent" />
@@ -296,17 +296,27 @@ defineExpose({ focus: () => inputRef.value?.focus() })
 </template>
 
 <style scoped>
-.palette-enter-active,
-.palette-leave-active {
-  transition: opacity 0.25s var(--ease-out-expo);
+/* 同 UiModal：遮罩层只渐变背景色与 blur 半径，任何 opacity 动画都会让 backdrop-filter 失效 */
+.n-palette-scrim {
+  background-color: rgba(21, 17, 11, 0.5);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  transition:
+    background-color 0.25s var(--ease-out-expo),
+    -webkit-backdrop-filter 0.34s cubic-bezier(0.15, 0.5, 0.35, 1),
+    backdrop-filter 0.34s cubic-bezier(0.15, 0.5, 0.35, 1);
 }
 .palette-enter-active > div:last-child,
 .palette-leave-active > div:last-child {
   transition: transform 0.32s var(--ease-out-expo), opacity 0.25s ease;
 }
-.palette-enter-from,
-.palette-leave-to {
-  opacity: 0;
+.palette-enter-from .n-palette-scrim {
+  background-color: rgba(21, 17, 11, 0);
+}
+.palette-leave-to .n-palette-scrim {
+  background-color: rgba(21, 17, 11, 0);
+  -webkit-backdrop-filter: blur(0);
+  backdrop-filter: blur(0);
 }
 .palette-enter-from > div:last-child,
 .palette-leave-to > div:last-child {

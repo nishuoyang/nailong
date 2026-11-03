@@ -23,6 +23,12 @@ export interface ImageItem {
   userId: string
   status: string
   section?: string
+  /** 投稿批次：一次投稿的多张图共享同一个 batchId（单图投稿为 null） */
+  batchId?: string | null
+  /** 同批次内的序号，0 为封面 */
+  batchIndex?: number
+  /** 同批次图片数量；> 1 时卡片显示角标 */
+  batchSize?: number
   isFeatured?: boolean
   likeCount: number
   downloadCount: number
@@ -40,6 +46,27 @@ export interface ImageItem {
   isLiked?: boolean
   isFavorited?: boolean
   favoritedAt?: string
+  /** 详情接口返回：同批次图片，用于左右切换（单图时 total = 1） */
+  batch?: BatchInfo
+}
+
+export interface BatchItem {
+  id: string
+  thumbnailUrl: string | null
+  thumbnailSmUrl: string | null
+  width: number | null
+  height: number | null
+  blurDataUrl: string | null
+  dominantColor: string | null
+}
+
+export interface BatchInfo {
+  /** 单图投稿时为 null */
+  id: string | null
+  total: number
+  /** 当前这张在 items 里的下标 */
+  index: number
+  items: BatchItem[]
 }
 
 export interface PaginatedResponse<T> {

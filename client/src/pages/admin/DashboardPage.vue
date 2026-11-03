@@ -62,7 +62,7 @@ const composition = computed(() => {
 
 const statCards = computed(() => [
   { label: '待审核', value: stats.value?.pending ?? 0, icon: 'clock', tone: 'bg-butter/40 text-ink', hint: '需要你处理' },
-  { label: '已通过', value: stats.value?.approved ?? 0, icon: 'check', tone: 'bg-jade/12 text-jade', hint: `今日 +${stats.value?.todayUploads ?? 0}` },
+  { label: '已通过', value: stats.value?.approved ?? 0, icon: 'check', tone: 'bg-jade/12 text-jade', hint: `今日投稿 +${stats.value?.todayUploads ?? 0}` },
   { label: '注册用户', value: stats.value?.users ?? 0, icon: 'users', tone: 'bg-sky/12 text-sky', hint: '站内成员' },
   { label: '评论', value: stats.value?.comments ?? 0, icon: 'comment', tone: 'bg-accent/10 text-accent', hint: `收藏 ${stats.value?.favorites ?? 0}` },
 ])

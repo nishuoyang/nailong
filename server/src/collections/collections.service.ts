@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { cleanText } from '../common/utils/text'
+import { engagementTargetId, resolveEngagementTargetId } from '../common/utils/batch'
 import type { CreateCollectionDto, UpdateCollectionDto } from './dto/collection.dto'
 
 const MAX_COLLECTIONS_PER_USER = 30
@@ -91,8 +92,11 @@ export class CollectionsService {
     // Membership lookup is one query for the whole list rather than N detail reads.
     let contained = new Set<string>()
     if (imageId && rows.length > 0) {
+      // 收藏夹里存的是批次封面；详情页可能停在同批第 N 张，先换算成同一个 id
+      const target = await resolveEngagementTargetId(this.prisma, imageId)
+      const targetId = target?.targetId ?? imageId
       const items = await this.prisma.collectionItem.findMany({
-        where: { imageId, collectionId: { in: rows.map((row) => row.id) } },
+        where: { imageId: targetId, collectionId: { in: rows.map((row) => row.id) } },
         select: { collectionId: true },
       })
       contained = new Set(items.map((item) => item.collectionId))
@@ -221,9 +225,12 @@ export class CollectionsService {
     const collection = await this.ownedCollection(id, user)
     const image = await this.prisma.image.findUnique({
       where: { id: imageId },
-      select: { id: true, status: true },
+      select: { id: true, batchId: true, status: true },
     })
     if (!image || image.status !== 'approved') throw new NotFoundException('图片不存在')
+
+    // 收藏夹以「投稿」为单位：无论从同批哪一张点收藏，都落到封面上
+    const targetId = await engagementTargetId(this.prisma, image)
 
     const count = await this.prisma.collectionItem.count({ where: { collectionId: id } })
     if (count >= MAX_ITEMS_PER_COLLECTION) {
@@ -232,7 +239,7 @@ export class CollectionsService {
 
     try {
       await this.prisma.$transaction([
-        this.prisma.collectionItem.create({ data: { collectionId: id, imageId } }),
+        this.prisma.collectionItem.create({ data: { collectionId: id, imageId: targetId } }),
         this.prisma.collection.update({ where: { id }, data: { updatedAt: new Date() } }),
       ])
     } catch (err: any) {
@@ -240,16 +247,19 @@ export class CollectionsService {
     }
 
     const total = await this.prisma.collectionItem.count({ where: { collectionId: id } })
-    return { collectionId: id, imageId, added: true, itemCount: total, isPublic: collection.isPublic }
+    return { collectionId: id, imageId: targetId, added: true, itemCount: total, isPublic: collection.isPublic }
   }
 
   async removeImage(id: string, user: { id: string; role: string }, imageId: string) {
     await this.ownedCollection(id, user)
+    // 同批任一成员的 id 都换算到封面，否则从第 2 张点「移出」会删不掉
+    const target = await resolveEngagementTargetId(this.prisma, imageId)
+    const targetId = target?.targetId ?? imageId
     const result = await this.prisma.collectionItem.deleteMany({
-      where: { collectionId: id, imageId },
+      where: { collectionId: id, imageId: targetId },
     })
     await this.prisma.collection.update({ where: { id }, data: { updatedAt: new Date() } })
     const total = await this.prisma.collectionItem.count({ where: { collectionId: id } })
-    return { collectionId: id, imageId, removed: result.count > 0, itemCount: total }
+    return { collectionId: id, imageId: targetId, removed: result.count > 0, itemCount: total }
   }
 }

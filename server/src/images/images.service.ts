@@ -6,9 +6,12 @@ import {
   OnModuleInit,
   OnModuleDestroy,
 } from '@nestjs/common'
+import { createHash } from 'node:crypto'
 import { PrismaService } from '../prisma/prisma.service'
 import { RedisService } from '../redis/redis.service'
 import { Prisma } from '@prisma/client'
+import { PUBLIC_IMAGE_PIVOT_WHERE, PUBLIC_IMAGE_WHERE } from '../common/constants/image-visibility'
+import { engagementTargetId } from '../common/utils/batch'
 
 // 将 Prisma 嵌套的 categories 扁平化：{ category: { id, name, slug } }[] → { id, name, slug }[]
 function flattenCategories(image: any) {
@@ -39,6 +42,10 @@ const MAX_PAGE = 1_000_000
 // Redis 不可用时 hincrby/hget/hgetall 全部 fail-open（静默不计数 / 按无增量处理），接口不受影响。
 const VIEW_COUNT_HASH = 'view:cnt'
 const VIEW_COUNT_FLUSH_MS = 30_000
+
+// 批次浏览去重窗口：同一访客在这段时间内反复切换同组图片只计一次。
+// 太短挡不住来回翻看，太长会把「过一会儿再看一次」也算成没看。
+const VIEW_DEDUPE_SECONDS = 600
 
 // 安全解析分页参数，防止 NaN 和负数
 function parsePage(page?: number): number {
@@ -122,10 +129,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     const size = parseSize(params.size)
     const { category, tag, userId, search, sort = 'latest', range } = params
 
-    const where: Prisma.ImageWhereInput = {
-      status: 'approved',
-      section: 'general',
-    }
+    const where: Prisma.ImageWhereInput = { ...PUBLIC_IMAGE_WHERE }
 
     if (category) {
       where.categories = {
@@ -190,7 +194,11 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     return { data, meta: { page, size, total, totalPages: Math.ceil(total / size) || 1 } }
   }
 
-  async findById(id: string, userId?: string) {
+  async findById(
+    id: string,
+    userId?: string,
+    viewer?: { ip?: string; userAgent?: string },
+  ) {
     const image = await this.prisma.image.findUnique({
       where: { id },
       include: {
@@ -211,19 +219,76 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // 增加浏览次数：只写 Redis（fire-and-forget），由 flushViewCounts 每 30s 批量回写。
-    // 读接口不再执行写事务；Redis 不可用时静默放弃本次计数，接口不受影响。
-    await this.redisService.hincrby(VIEW_COUNT_HASH, id, 1)
+    // 互动数据整组共用：点赞/评论/收藏/下载/浏览都记在封面那一行，
+    // 所以统计值、是否已赞、是否已收藏都要按归属图来读。
+    const engagementId = await engagementTargetId(this.prisma, image)
+    const counters =
+      engagementId === image.id
+        ? image
+        : (await this.prisma.image.findUnique({
+            where: { id: engagementId },
+            select: {
+              viewCount: true,
+              likeCount: true,
+              downloadCount: true,
+              commentCount: true,
+              favoriteCount: true,
+            },
+          })) ?? image
+
+    // 记一次浏览（同组图片在短窗口内只记一次，见 countViewOnce）
+    await this.countViewOnce(image, engagementId, userId, viewer)
+
+    // 同批图片：详情页用它做左右切换。列表只展示封面（batchIndex=0），
+    // 非封面图只能从这里取；单图投稿没有 batchId，就退化成只有自己的一条。
+    const batchRows = image.batchId
+      ? await this.prisma.image.findMany({
+          where: {
+            batchId: image.batchId,
+            // 整批的状态是同步变更的；这里再过滤一次 approved，是为了兜住
+            // 管理员单独下架某一张的历史数据，别让下架图从详情页漏出去。
+            ...(image.status === 'approved' ? { status: 'approved' } : {}),
+          },
+          orderBy: [{ batchIndex: 'asc' }, { createdAt: 'asc' }],
+          select: {
+            id: true,
+            thumbnailUrl: true,
+            thumbnailSmUrl: true,
+            width: true,
+            height: true,
+            blurDataUrl: true,
+            dominantColor: true,
+          },
+        })
+      : []
+
+    const batchItems = batchRows.length
+      ? batchRows
+      : [
+          {
+            id: image.id,
+            thumbnailUrl: image.thumbnailUrl,
+            thumbnailSmUrl: image.thumbnailSmUrl,
+            width: image.width,
+            height: image.height,
+            blurDataUrl: image.blurDataUrl,
+            dominantColor: image.dominantColor,
+          },
+        ]
+    const batchIndex = Math.max(
+      0,
+      batchItems.findIndex((item) => item.id === image.id),
+    )
 
     let isLiked = false
     let isFavorited = false
     if (userId) {
       const [like, favorite] = await Promise.all([
         this.prisma.like.findUnique({
-          where: { userId_imageId: { userId, imageId: id } },
+          where: { userId_imageId: { userId, imageId: engagementId } },
         }),
         this.prisma.favorite.findUnique({
-          where: { userId_imageId: { userId, imageId: id } },
+          where: { userId_imageId: { userId, imageId: engagementId } },
         }),
       ])
       isLiked = !!like
@@ -232,15 +297,64 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
 
     // 展示数 = 已落库值 + 尚未回写的增量。回写完成（哈希被清）后增量自然归零，
     // 长时间不刷新页面也不会看到虚高。
-    const pending = await this.redisService.hget(VIEW_COUNT_HASH, id)
-    const viewCount = image.viewCount + (pending ? Number(pending) : 0)
+    const pending = await this.redisService.hget(VIEW_COUNT_HASH, engagementId)
+    const viewCount = counters.viewCount + (pending ? Number(pending) : 0)
     return {
       ...flattenCategories(image),
       tags: image.tags.map((t) => t.tag),
+      // 五个统计值统一取归属图（封面）的，保证整组切图时数字不动
+      likeCount: counters.likeCount,
+      downloadCount: counters.downloadCount,
+      commentCount: counters.commentCount,
+      favoriteCount: counters.favoriteCount,
       viewCount,
       isLiked,
       isFavorited,
+      // 同批次信息。items 至少包含当前这张，total === 1 表示不是多图投稿。
+      batch: {
+        id: image.batchId ?? null,
+        total: batchItems.length,
+        index: batchIndex,
+        items: batchItems,
+      },
     }
+  }
+
+  /**
+   * 记一次浏览。**同一访客在 VIEW_DEDUPE_SECONDS 内只记一次**（仅批次图）。
+   *
+   * 为什么需要去重：批次内左右切换会重新请求详情接口，如果每次 GET 都 +1，
+   * 同组两张会各显示一个不同的数字（线上看到 8 / 7），看起来像没做聚合。
+   * 用「访客身份 + 归属图」做去重键后，来回翻、刷新都不会重复计数，
+   * 换个人打开才会再 +1。
+   *
+   * 单图投稿保持原有口径（每次 GET 都计），避免悄悄改变全站统计。
+   * Redis 不可用时全部 fail-open：get 返回 null → 照常 +1。
+   */
+  private async countViewOnce(
+    image: { batchId: string | null },
+    engagementId: string,
+    userId?: string,
+    viewer?: { ip?: string; userAgent?: string },
+  ): Promise<void> {
+    if (!image.batchId) {
+      await this.redisService.hincrby(VIEW_COUNT_HASH, engagementId, 1)
+      return
+    }
+
+    const identity = userId ?? (viewer?.ip ? `${viewer.ip}|${viewer.userAgent ?? ''}` : '')
+    if (!identity) {
+      await this.redisService.hincrby(VIEW_COUNT_HASH, engagementId, 1)
+      return
+    }
+
+    const digest = createHash('sha1').update(identity).digest('hex').slice(0, 16)
+    const seenKey = `view:seen:${engagementId}:${digest}`
+    if (await this.redisService.get(seenKey)) return
+
+    // 先占位再计数：两个并发请求最多多记一次，不会出现「两次都没记」
+    await this.redisService.set(seenKey, '1', VIEW_DEDUPE_SECONDS)
+    await this.redisService.hincrby(VIEW_COUNT_HASH, engagementId, 1)
   }
 
   /**
@@ -252,6 +366,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
       where: { id },
       select: {
         id: true,
+        batchId: true,
         section: true,
         categories: { select: { categoryId: true } },
         tags: { select: { tagId: true } },
@@ -265,11 +380,24 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     if (tagIds.length) or.push({ tags: { some: { tagId: { in: tagIds } } } })
     if (categoryIds.length) or.push({ categories: { some: { categoryId: { in: categoryIds } } } })
 
+    // 排除同一批次的其它图：在详情页翻到第 2 张时，不该把同组的封面当成「相关推荐」。
+    //
+    // ⚠️ 不能只写 `{ batchId: { not: batchId } }`：SQL 里 `NULL <> 'x'` 是 UNKNOWN，
+    // 单图投稿（batchId 为 null）会被一起排除 —— 实测相关推荐直接变成 0 条。
+    // 必须显式把 null 放回来。
+    const exclude: Prisma.ImageWhereInput = image.batchId
+      ? { OR: [{ batchId: null }, { batchId: { not: image.batchId } }] }
+      : { id: { not: id } }
+
     const base: Prisma.ImageWhereInput = {
-      id: { not: id },
+      ...exclude,
       status: 'approved',
       section: image.section,
-      ...(or.length ? { OR: or } : {}),
+      // 推荐位只放封面，避免同一批图重复占位
+      batchIndex: 0,
+      // 标签/分类的 OR 与上面的 exclude 是并列关系，必须放进 AND，
+      // 否则同名的第二个 OR 会把 exclude 覆盖掉。
+      ...(or.length ? { AND: [{ OR: or }] } : {}),
     }
 
     let rows = await this.prisma.image.findMany({
@@ -286,7 +414,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     if (rows.length < limit) {
       const seen = new Set(rows.map((row) => row.id))
       const fallback = await this.prisma.image.findMany({
-        where: { id: { not: id }, status: 'approved', section: image.section },
+        where: { ...exclude, status: 'approved', section: image.section, batchIndex: 0 },
         orderBy: { createdAt: 'desc' },
         take: limit * 2,
         include: {
@@ -313,7 +441,8 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     const [images, users, comments, collections, aggregates, todayUploads] = await Promise.all([
-      this.prisma.image.count({ where: { status: 'approved' } }),
+      // 计数口径按投稿批次（封面那张），与列表里能看到的卡片数一致
+      this.prisma.image.count({ where: { status: 'approved', batchIndex: 0 } }),
       this.prisma.user.count(),
       this.prisma.comment.count(),
       this.prisma.collection.count({ where: { isPublic: true } }),
@@ -321,7 +450,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
         where: { status: 'approved' },
         _sum: { likeCount: true, downloadCount: true, viewCount: true },
       }),
-      this.prisma.image.count({ where: { createdAt: { gte: today } } }),
+      this.prisma.image.count({ where: { createdAt: { gte: today }, batchIndex: 0 } }),
     ])
 
     const value = {
@@ -346,6 +475,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     const where: Prisma.ImageWhereInput = {
       status: 'approved',
       section: 'other',
+      batchIndex: 0,
     }
 
     const [raw, total] = await Promise.all([
@@ -378,6 +508,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     const where: Prisma.ImageWhereInput = {
       status: 'approved',
       isFeatured: true,
+      batchIndex: 0,
     }
 
     const [raw, total] = await Promise.all([
@@ -410,13 +541,13 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     if (cached) return JSON.parse(cached)
 
     const count = await this.prisma.image.count({
-      where: { status: 'approved', section: 'general' },
+      where: { status: 'approved', section: 'general', batchIndex: 0 },
     })
     if (count === 0) return null
 
     const skip = Math.floor(Math.random() * count)
     const image = await this.prisma.image.findFirst({
-      where: { status: 'approved', section: 'general' },
+      where: { status: 'approved', section: 'general', batchIndex: 0 },
       select: {
         id: true,
         title: true,
@@ -459,6 +590,7 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
       where: {
         status: 'approved',
         section: 'general',
+        batchIndex: 0,
         ...(range === 'all' ? {} : { createdAt: { gte: since } }),
       },
       select: {
@@ -489,10 +621,22 @@ export class ImagesService implements OnModuleInit, OnModuleDestroy {
     return this.prisma.image.findUnique({ where: { id } })
   }
 
+  /**
+   * 分类列表与「公开可见图片数」。
+   *
+   * `_count.images` 必须带 where —— 裸计数会把待审核、已拒绝、已下架以及
+   * 其他推荐（section='other'）的图片都算进来，而发现页列表只查
+   * `approved + general`，两个口径不一致就会出现「计数 3、列表 0」。
+   * 这里与 findAll 共用 PUBLIC_IMAGE_WHERE，保证数字和点进去的结果永远同源。
+   */
   async getCategories() {
     const rows = await this.prisma.category.findMany({
       orderBy: { name: 'asc' },
-      include: { _count: { select: { images: true } } },
+      include: {
+        _count: {
+          select: { images: { where: PUBLIC_IMAGE_PIVOT_WHERE } },
+        },
+      },
     })
     return rows.map(({ _count, ...category }) => ({ ...category, count: _count.images }))
   }

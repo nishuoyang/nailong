@@ -1,9 +1,27 @@
 import { Injectable, BadRequestException } from '@nestjs/common'
+import { randomUUID } from 'node:crypto'
 import * as sharp from 'sharp'
 import { PrismaService } from '../prisma/prisma.service'
 import { MinioService, type ObjectMeta } from '../minio/minio.service'
 import { cleanText } from '../common/utils/text'
 import { ensureTags } from '../common/utils/tags'
+
+/** 一次投稿最多几张图。前端限制与此保持一致（client/src/pages/UploadPage.vue）。 */
+export const MAX_BATCH_IMAGES = 9
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024
+const ALLOWED_FORMATS = ['jpeg', 'png', 'webp']
+const EXT_BY_FORMAT: Record<string, string> = { jpeg: 'jpg', png: 'png', webp: 'webp' }
+
+interface PreparedImage {
+  smName: string
+  mdName: string
+  rawName: string
+  width: number | null
+  height: number | null
+  dominantColor: string | null
+  blurDataUrl: string | null
+}
 
 @Injectable()
 export class UploadService {
@@ -12,8 +30,16 @@ export class UploadService {
     private minioService: MinioService,
   ) {}
 
-  async uploadImage(
-    file: Express.Multer.File,
+  /**
+   * 一次投稿可以带多张图，它们属于同一批次（batchId 相同，batchIndex 0 为封面）。
+   *
+   * 关键取舍：
+   *  - 先全部校验、再逐张处理。任何一张不合格就整批拒绝，不落半批数据；
+   *  - 中途失败（sharp 或 MinIO）会把已写入的对象删掉，避免留下孤儿文件；
+   *  - 每日配额按「张」计，而不是按「次」计——一次传 9 张就是 9 张的额度。
+   */
+  async uploadImages(
+    files: Express.Multer.File[],
     userId: string,
     title: string,
     description?: string,
@@ -21,43 +47,138 @@ export class UploadService {
     section?: string,
     rawTags?: string,
   ) {
-    if (!file) {
+    if (!files?.length) {
       throw new BadRequestException('请选择要上传的图片')
     }
-    if (file.size > 10 * 1024 * 1024) {
-      throw new BadRequestException('文件大小不能超过 10MB')
+    if (files.length > MAX_BATCH_IMAGES) {
+      throw new BadRequestException(`一次最多上传 ${MAX_BATCH_IMAGES} 张图片`)
+    }
+    if (!title?.trim()) {
+      throw new BadRequestException('请填写标题')
     }
 
-    // 用 sharp metadata 验证真实文件类型（magic bytes），不信任 Content-Type
-    let metadata: sharp.Metadata
-    try {
-      metadata = await sharp(file.buffer, { limitInputPixels: 50_000_000 }).metadata()
-    } catch {
-      throw new BadRequestException('无法识别的图片格式')
-    }
-    const allowedFormats = ['jpeg', 'png', 'webp']
-    if (!metadata.format || !allowedFormats.includes(metadata.format)) {
-      throw new BadRequestException('仅支持 JPEG、PNG、WebP 格式')
+    // ── 1. 全部先校验（大小 / 真实格式） ──
+    const validated: Array<{ file: Express.Multer.File; format: string }> = []
+    for (const file of files) {
+      const label = file.originalname || '图片'
+      if (!file.buffer?.length) {
+        throw new BadRequestException(`「${label}」是空文件`)
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        throw new BadRequestException(`「${label}」超过 10MB`)
+      }
+
+      // 用 sharp metadata 验证真实文件类型（magic bytes），不信任 Content-Type
+      let format: string | undefined
+      try {
+        const metadata = await sharp(file.buffer, { limitInputPixels: 50_000_000 }).metadata()
+        format = metadata.format
+      } catch {
+        throw new BadRequestException(`「${label}」无法识别，请确认不是损坏的文件`)
+      }
+      if (!format || !ALLOWED_FORMATS.includes(format)) {
+        throw new BadRequestException(`「${label}」格式不支持，仅支持 JPEG、PNG、WebP`)
+      }
+      validated.push({ file, format })
     }
 
-    // 检查用户当日上传数量（防滥用）
+    // ── 2. 每日上传配额 ──
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     const todayCount = await this.prisma.image.count({
-      where: {
-        userId,
-        createdAt: { gte: today },
-      },
+      where: { userId, createdAt: { gte: today } },
     })
-    if (todayCount >= 50) {
-      throw new BadRequestException('今日上传次数已达上限（50张）')
+    if (todayCount + files.length > 50) {
+      const remaining = Math.max(0, 50 - todayCount)
+      throw new BadRequestException(
+        remaining > 0
+          ? `今日上传额度还剩 ${remaining} 张，这次选了 ${files.length} 张`
+          : '今日上传次数已达上限（50张）',
+      )
     }
 
+    const tags = await ensureTags(this.prisma, rawTags)
+
+    // 同一批次共用一个时间戳前缀，方便在 MinIO 里按批次排查
+    const batchStamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const batchId = files.length > 1 ? randomUUID() : null
+    const uploadedNames: string[] = []
+
+    // ── 3. 逐张处理并上传 ──
+    // 串行而非并行：9 张大图同时解码会把 2 vCPU 的小机器内存顶满，
+    // 单张 ~100ms 的处理时间在整体体验上可以忽略。
+    const prepared: PreparedImage[] = []
+    try {
+      for (const [index, { file, format }] of validated.entries()) {
+        const image = await this.prepareOne(file, batchStamp, index, format)
+        prepared.push(image)
+        uploadedNames.push(image.smName, image.mdName, image.rawName)
+      }
+    } catch (err) {
+      await this.removeObjects(uploadedNames)
+      if (err instanceof BadRequestException) throw err
+      throw new BadRequestException('图片处理失败，请确认文件未损坏')
+    }
+
+    // ── 4. 入库 ──
+    // 一整个批次在同一个事务里创建：要么 9 张都进审核队列，要么一张都没有。
+    // URL 只存字符串（见 AGENTS.md「存储透明」），换 MinIO/OSS/COS 不改 schema。
+    const baseUrl = this.minioService.baseUrl
+    try {
+      const images = await this.prisma.$transaction(
+        prepared.map((item, index) =>
+          this.prisma.image.create({
+            data: {
+              title: cleanText(title, 255),
+              description: description ? cleanText(description, 500) : null,
+              url: `${baseUrl}/${item.rawName}`,
+              thumbnailUrl: `${baseUrl}/${item.mdName}`,
+              thumbnailSmUrl: `${baseUrl}/${item.smName}`,
+              width: item.width,
+              height: item.height,
+              dominantColor: item.dominantColor,
+              blurDataUrl: item.blurDataUrl,
+              userId,
+              status: 'pending',
+              section: section === 'other' ? 'other' : 'general',
+              batchId,
+              batchIndex: index,
+              batchSize: prepared.length,
+              categories: categoryIds?.length
+                ? { create: categoryIds.map((categoryId) => ({ categoryId })) }
+                : undefined,
+              tags: tags.length ? { create: tags.map((tag) => ({ tagId: tag.id })) } : undefined,
+            },
+          }),
+        ),
+      )
+
+      return {
+        id: images[0].id,
+        ids: images.map((image) => image.id),
+        batchId,
+        count: images.length,
+        message:
+          images.length > 1
+            ? `${images.length} 张图已提交，等待管理员审核`
+            : '上传成功，等待管理员审核',
+      }
+    } catch (err) {
+      // 入库失败则把刚传上去的文件也清掉，否则会留下一组没人引用的对象
+      await this.removeObjects(uploadedNames)
+      throw err
+    }
+  }
+
+  /** 单张图：生成缩略图/占位图，写入 MinIO，返回可入库的字段。 */
+  private async prepareOne(
+    file: Express.Multer.File,
+    batchStamp: string,
+    index: number,
+    format: string,
+  ): Promise<PreparedImage> {
     // 扩展名用 sharp 校验出的真实格式，而不是客户端给的 mimetype
-    // （mimetype 是客户端声明的，可能与真实内容不符）
-    const extByFormat: Record<string, string> = { jpeg: 'jpg', png: 'png', webp: 'webp' }
-    const ext = extByFormat[metadata.format] ?? 'jpg'
-    const baseName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const ext = EXT_BY_FORMAT[format] ?? 'jpg'
 
     // 生成缩略图（包裹 try-catch 防 corrupt 文件）
     //
@@ -88,7 +209,6 @@ export class UploadService {
     }
 
     // 模糊占位图与主色：列表先铺色块再换清晰图，避免大图加载时的空洞。
-    // 1x1 raw 取主色；24px WebP 作为极小的 data URI 占位（通常 < 600 字节）。
     let dominantColor: string | null = null
     let blurDataUrl: string | null = null
     try {
@@ -97,39 +217,28 @@ export class UploadService {
         sharp(mdBuffer).resize(24).blur(1.4).webp({ quality: 35 }).toBuffer(),
       ])
       if (pixel.length >= 3) {
-        dominantColor = '#' + [pixel[0], pixel[1], pixel[2]]
-          .map((v) => v.toString(16).padStart(2, '0'))
-          .join('')
+        dominantColor =
+          '#' +
+          [pixel[0], pixel[1], pixel[2]].map((v) => v.toString(16).padStart(2, '0')).join('')
       }
       blurDataUrl = `data:image/webp;base64,${blur.toString('base64')}`
     } catch {
       // 占位图失败不影响上传：前端会退化为普通 loading
     }
 
-    // 上传到 MinIO
-    //
-    // 必须显式写入对象元数据：不传 meta 时 MinIO 会把对象存成 `binary/octet-stream`
-    // （线上 33 个存量对象全部如此）。虽然 main.ts 的 /minio 代理现在会按扩展名推断
-    // Content-Type 兜住浏览器侧，但**任何绕过代理的读取**（MinIO 控制台、将来接 CDN 回源、
-    // 预签名 URL 直连）拿到的都是错误的类型，所以要在数据源头修正。
-    //
-    // Cache-Control 用 immutable 一年：对象名内含随机串，内容永不覆盖，
-    // 与 main.ts 代理里设置的响应头保持一致。
+    // 必须显式写入对象元数据：不传 meta 时 MinIO 会把对象存成 `binary/octet-stream`，
+    // 任何绕过 /minio 代理的读取（控制台、CDN 回源、预签名直连）拿到的都是错误的类型。
     const immutableCache = 'public, max-age=31536000, immutable'
     const putMeta = (contentType: string): ObjectMeta => ({
       'Content-Type': contentType,
       'Cache-Control': immutableCache,
     })
 
-    const [smName, mdName, rawName] = [
-      `${baseName}_thumb_sm.webp`,
-      `${baseName}_thumb_md.webp`,
-      `${baseName}.${ext}`,
-    ]
-
-    // 原图用 sharp 探测出的**真实**格式对应的 MIME，而不是客户端声明的 file.mimetype
-    // （mimetype 是客户端可控的，前面已用 sharp 校验过真实格式）
-    const rawContentType = `image/${metadata.format === 'jpg' ? 'jpeg' : metadata.format}`
+    const baseName = `${batchStamp}-${index}`
+    const smName = `${baseName}_thumb_sm.webp`
+    const mdName = `${baseName}_thumb_md.webp`
+    const rawName = `${baseName}.${ext}`
+    const rawContentType = `image/${format === 'jpg' ? 'jpeg' : format}`
 
     await Promise.all([
       this.minioService.putObject(smName, smBuffer, putMeta('image/webp')),
@@ -137,38 +246,21 @@ export class UploadService {
       this.minioService.putObject(rawName, file.buffer, putMeta(rawContentType)),
     ])
 
-    const baseUrl = this.minioService.baseUrl
-    const tags = await ensureTags(this.prisma, rawTags)
+    return {
+      smName,
+      mdName,
+      rawName,
+      width: mdMeta.width ?? null,
+      height: mdMeta.height ?? null,
+      dominantColor,
+      blurDataUrl,
+    }
+  }
 
-    const image = await this.prisma.image.create({
-      data: {
-        title: cleanText(title, 255),
-        description: description ? cleanText(description, 500) : null,
-        url: `${baseUrl}/${rawName}`,
-        thumbnailUrl: `${baseUrl}/${mdName}`,
-        thumbnailSmUrl: `${baseUrl}/${smName}`,
-        width: mdMeta.width ?? null,
-        height: mdMeta.height ?? null,
-        dominantColor,
-        blurDataUrl,
-        userId,
-        status: 'pending',
-        section: section === 'other' ? 'other' : 'general',
-        categories: categoryIds?.length
-          ? {
-              create: categoryIds.map((categoryId) => ({ categoryId })),
-            }
-          : undefined,
-        tags: tags.length
-          ? { create: tags.map((tag) => ({ tagId: tag.id })) }
-          : undefined,
-      },
-      include: {
-        categories: { include: { category: true } },
-        tags: { include: { tag: true } },
-      },
-    })
-
-    return { id: image.id, message: '上传成功，等待管理员审核' }
+  /** 尽力删除对象；单个失败不影响其它清理动作。 */
+  private async removeObjects(names: string[]): Promise<void> {
+    await Promise.all(
+      names.map((name) => this.minioService.removeObject(name).catch(() => undefined)),
+    )
   }
 }

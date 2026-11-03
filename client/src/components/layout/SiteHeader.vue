@@ -227,9 +227,9 @@ function logout() {
 
     <!-- Mobile sheet -->
     <Teleport to="body">
-      <Transition name="sheet">
+      <Transition name="sheet" :duration="{ enter: 420, leave: 420 }">
         <div v-if="mobileOpen" class="fixed inset-0 z-[80] lg:hidden">
-          <div class="absolute inset-0 bg-[#15110b]/45 backdrop-blur-sm" @click="mobileOpen = false" />
+          <div class="n-sheet-scrim absolute inset-0" @click="mobileOpen = false" />
           <div class="absolute inset-x-3 top-3 overflow-hidden rounded-[30px] border border-ink bg-paper shadow-[0_30px_80px_-20px_rgba(20,15,8,.6)]">
             <div class="flex items-center justify-between px-5 pb-3 pt-5">
               <span class="font-mono text-[10px] uppercase tracking-[0.22em] text-muted">Navigate the universe</span>
@@ -308,17 +308,27 @@ function logout() {
   opacity: 0;
   transform: translateY(-6px) scale(0.98);
 }
-.sheet-enter-active,
-.sheet-leave-active {
-  transition: opacity 0.3s var(--ease-out-expo);
-}
 .sheet-enter-active > div:last-child,
 .sheet-leave-active > div:last-child {
   transition: transform 0.4s var(--ease-out-expo);
 }
-.sheet-enter-from,
-.sheet-leave-to {
-  opacity: 0;
+/* 同 UiModal：遮罩层只渐变背景色与 blur 半径，否则 backdrop-filter 会被 opacity 组屏蔽 */
+.n-sheet-scrim {
+  background-color: rgba(21, 17, 11, 0.45);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transition:
+    background-color 0.3s var(--ease-out-expo),
+    -webkit-backdrop-filter 0.4s cubic-bezier(0.15, 0.5, 0.35, 1),
+    backdrop-filter 0.4s cubic-bezier(0.15, 0.5, 0.35, 1);
+}
+.sheet-enter-from .n-sheet-scrim {
+  background-color: rgba(21, 17, 11, 0);
+}
+.sheet-leave-to .n-sheet-scrim {
+  background-color: rgba(21, 17, 11, 0);
+  -webkit-backdrop-filter: blur(0);
+  backdrop-filter: blur(0);
 }
 .sheet-enter-from > div:last-child,
 .sheet-leave-to > div:last-child {

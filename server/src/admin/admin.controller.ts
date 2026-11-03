@@ -87,6 +87,11 @@ export class AdminController {
     return this.adminService.deleteMeme(id)
   }
 
+  @Get('categories')
+  async getCategories() {
+    return this.adminService.listCategories()
+  }
+
   @Post('categories')
   async createCategory(@Body() body: { name: string; slug: string; description?: string }) {
     return this.adminService.createCategory(body)

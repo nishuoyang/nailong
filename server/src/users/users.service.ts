@@ -105,7 +105,8 @@ export class UsersService {
     if (!user) throw new NotFoundException('用户不存在')
 
     const [imageCount, followerCount, followingCount, likeAgg, isFollowing] = await Promise.all([
-      this.prisma.image.count({ where: { userId: id, status: 'approved' } }),
+      // 作品数按「投稿批次」计：一次传 5 张仍算 1 个作品，与列表里只出现一张卡保持一致
+      this.prisma.image.count({ where: { userId: id, status: 'approved', batchIndex: 0 } }),
       this.prisma.follow.count({ where: { followingId: id } }),
       this.prisma.follow.count({ where: { followerId: id } }),
       this.prisma.image.aggregate({
@@ -159,7 +160,7 @@ export class UsersService {
 
     const [data, total] = await Promise.all([
       this.prisma.image.findMany({
-        where: { userId, status: 'approved' },
+        where: { userId, status: 'approved', batchIndex: 0 },
         include: {
           categories: { include: { category: true } },
           tags: { include: { tag: true } },
@@ -169,7 +170,7 @@ export class UsersService {
         skip: (pageNum - 1) * sizeNum,
         take: sizeNum,
       }),
-      this.prisma.image.count({ where: { userId, status: 'approved' } }),
+      this.prisma.image.count({ where: { userId, status: 'approved', batchIndex: 0 } }),
     ])
     return {
       data: data.map((image) => ({
@@ -196,7 +197,8 @@ export class UsersService {
     const sizeNum = parseSize(size)
     const [data, total] = await Promise.all([
       this.prisma.image.findMany({
-        where: { userId },
+        // 我的作品也按批次折叠：一批多图只出现一张卡（封面）
+        where: { userId, batchIndex: 0 },
         include: {
           categories: { include: { category: true } },
           tags: { include: { tag: true } },
@@ -206,7 +208,7 @@ export class UsersService {
         skip: (pageNum - 1) * sizeNum,
         take: sizeNum,
       }),
-      this.prisma.image.count({ where: { userId } }),
+      this.prisma.image.count({ where: { userId, batchIndex: 0 } }),
     ])
     return {
       data: data.map((image) => ({

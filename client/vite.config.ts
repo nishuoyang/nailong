@@ -59,7 +59,10 @@ export default defineConfig({
       'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy':
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:3000; frame-src https://player.bilibili.com; frame-ancestors 'none';",
+        // img-src 必须允许 blob:，与 server/src/main.ts 下发的生产 CSP 保持一致：
+        // 投稿页与头像上传都用 URL.createObjectURL() 生成本地预览图，
+        // 少了这一项，开发环境（:5173）里选完图会直接报「这个文件不是能识别的图片」。
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://localhost:3000; frame-src https://player.bilibili.com; frame-ancestors 'none';",
     },
   },
 })

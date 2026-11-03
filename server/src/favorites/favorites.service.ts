@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { engagementTargetId } from '../common/utils/batch'
 
 function parsePage(value?: number): number {
   const n = Number(value)
@@ -17,19 +18,22 @@ export class FavoritesService {
   async toggle(userId: string, imageId: string) {
     const image = await this.prisma.image.findUnique({
       where: { id: imageId },
-      select: { id: true, status: true },
+      select: { id: true, batchId: true, status: true },
     })
     if (!image || image.status !== 'approved') throw new NotFoundException('图片不存在')
 
+    // 收藏整组共用一条：收藏的是这次投稿，而不是其中某一张
+    const targetId = await engagementTargetId(this.prisma, image)
+
     const existing = await this.prisma.favorite.findUnique({
-      where: { userId_imageId: { userId, imageId } },
+      where: { userId_imageId: { userId, imageId: targetId } },
     })
 
     if (existing) {
       const [, updated] = await this.prisma.$transaction([
         this.prisma.favorite.delete({ where: { id: existing.id } }),
         this.prisma.image.update({
-          where: { id: imageId },
+          where: { id: targetId },
           data: { favoriteCount: { decrement: 1 } },
         }),
       ])
@@ -38,9 +42,9 @@ export class FavoritesService {
 
     try {
       const [, updated] = await this.prisma.$transaction([
-        this.prisma.favorite.create({ data: { userId, imageId } }),
+        this.prisma.favorite.create({ data: { userId, imageId: targetId } }),
         this.prisma.image.update({
-          where: { id: imageId },
+          where: { id: targetId },
           data: { favoriteCount: { increment: 1 } },
         }),
       ])
@@ -48,7 +52,7 @@ export class FavoritesService {
     } catch (err: any) {
       if (err?.code === 'P2002') {
         const current = await this.prisma.image.findUnique({
-          where: { id: imageId },
+          where: { id: targetId },
           select: { favoriteCount: true },
         })
         return { favorited: true, favoriteCount: current?.favoriteCount ?? 0 }

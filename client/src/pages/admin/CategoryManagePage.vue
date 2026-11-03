@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { getCategories } from '@/api/images'
-import { createCategory, deleteCategory, updateCategory } from '@/api/admin'
+import { getAdminCategories, createCategory, deleteCategory, updateCategory, type AdminCategory } from '@/api/admin'
 import { useToast } from '@/composables/useToast'
 import AdminShell from '@/components/layout/AdminShell.vue'
 import UiModal from '@/components/ui/UiModal.vue'
@@ -14,16 +13,23 @@ const toast = useToast()
 const queryClient = useQueryClient()
 
 const { data: categories, isLoading } = useQuery({
-  queryKey: ['categories'],
-  queryFn: () => getCategories().then((r) => r.data.data),
+  queryKey: ['admin', 'categories'],
+  queryFn: () => getAdminCategories().then((r) => r.data.data),
   staleTime: 10 * 60_000,
 })
 
 const dialogOpen = ref(false)
 const editingId = ref<string | null>(null)
 const saving = ref(false)
-const deleteTarget = ref<{ id: string; name: string; count?: number } | null>(null)
+const deleteTarget = ref<AdminCategory | null>(null)
 const form = reactive({ name: '', slug: '', description: '' })
+
+// 公开筛选条（['categories']）和后台列表（['admin','categories']）是两份查询，
+// 增删改后都要失效，否则前台计数会在 staleTime 内继续显示旧值。
+function refreshCategories() {
+  queryClient.invalidateQueries({ queryKey: ['categories'] })
+  queryClient.invalidateQueries({ queryKey: ['admin', 'categories'] })
+}
 
 function openCreate() {
   editingId.value = null
@@ -54,6 +60,7 @@ async function save() {
       toast.success('分类已创建')
     }
     queryClient.invalidateQueries({ queryKey: ['categories'] })
+    queryClient.invalidateQueries({ queryKey: ['admin', 'categories'] })
     dialogOpen.value = false
   } catch (err: any) {
     toast.error(err.response?.data?.message || '保存失败')
@@ -65,7 +72,7 @@ async function save() {
 const deleteMutation = useMutation({
   mutationFn: (id: string) => deleteCategory(id),
   onSuccess: () => {
-    queryClient.invalidateQueries({ queryKey: ['categories'] })
+    refreshCategories()
     deleteTarget.value = null
     toast.success('分类已删除')
   },
@@ -99,7 +106,10 @@ function autoSlug() {
             <p class="truncate font-display text-[26px] leading-none text-ink">{{ category.name }}</p>
             <p class="mt-2 font-mono text-[9px] uppercase tracking-[0.12em] text-muted">/{{ category.slug }}</p>
           </div>
-          <span class="shrink-0 rounded-full bg-surface-2 px-2 py-1 font-mono text-[9px] text-muted">{{ category.count ?? 0 }} 张</span>
+          <span class="shrink-0 rounded-full bg-surface-2 px-2 py-1 font-mono text-[9px] text-muted">
+            公开 {{ category.count ?? 0 }}
+            <span v-if="category.totalCount > category.count" class="opacity-60">/ 共 {{ category.totalCount }}</span>
+          </span>
         </div>
         <p class="mt-3 line-clamp-2 min-h-[2.4em] text-[11px] leading-relaxed text-muted">{{ category.description || '还没有描述' }}</p>
         <div class="mt-4 flex gap-1.5 opacity-60 transition group-hover:opacity-100">
@@ -132,7 +142,7 @@ function autoSlug() {
     <UiModal :model-value="!!deleteTarget" title="删除分类" width="420px" @update:model-value="deleteTarget = null">
       <p class="text-sm leading-relaxed text-ink-2">
         确定删除「{{ deleteTarget?.name }}」吗？
-        <span v-if="deleteTarget?.count" class="text-accent">该分类下还有 {{ deleteTarget.count }} 张图片，需要先移除关联。</span>
+        <span v-if="deleteTarget?.totalCount" class="text-accent">该分类下还有 {{ deleteTarget.totalCount }} 张图片（含待审核 / 其他推荐），需要先移除关联。</span>
       </p>
       <div class="mt-5 flex justify-end gap-2">
         <UiButton variant="ghost" @click="deleteTarget = null">取消</UiButton>

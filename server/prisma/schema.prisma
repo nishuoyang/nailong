@@ -81,6 +81,17 @@ model Image {
   userId         String   @map("user_id")
   status         String   @default("pending")
   section        String   @default("general")
+  /// 投稿批次：一次投稿的多张图共享同一个 batchId，batchIndex 从 0 开始，0 即封面。
+  ///
+  /// 为什么不是「一图一条投稿」：产品上一次投稿就是一个整体，列表里只应出现一张卡，
+  /// 详情页再左右翻看同批的其它图。所以列表查询统一带 `batchIndex: 0`——
+  /// 存量单图数据的 batchId 为 null、batchIndex 默认 0，天然满足该条件，无需回填。
+  batchId        String?  @map("batch_id")
+  batchIndex     Int      @default(0) @map("batch_index")
+  /// 同一批次的图片数量（冗余字段，列表角标用）。
+  /// 详情页以实际查到的同批图片为准，所以即使这个数字因为人工删图略有偏差，
+  /// 也不会出现「翻到尽头还有箭头」的错误交互。
+  batchSize      Int      @default(1) @map("batch_size")
   isFeatured     Boolean  @default(false) @map("is_featured")
   likeCount      Int      @default(0) @map("like_count")
   downloadCount  Int      @default(0) @map("download_count")
@@ -114,6 +125,8 @@ model Image {
   @@index([status, section, createdAt])
   // 热门/排行：WHERE status='approved' + ORDER BY like_count DESC
   @@index([status, likeCount])
+  // 详情页取同批图片：WHERE batch_id=? ORDER BY batch_index ASC
+  @@index([batchId, batchIndex])
 }
 
 model ImagesOnCategories {

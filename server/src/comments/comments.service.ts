@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { cleanText } from '../common/utils/text'
+import { engagementTargetId } from '../common/utils/batch'
 
 function parsePage(value?: number): number {
   const n = Number(value)
@@ -19,24 +20,27 @@ export class CommentsService {
   async list(imageId: string, page?: number, size?: number, viewer?: { id: string; role: string }) {
     const image = await this.prisma.image.findUnique({
       where: { id: imageId },
-      select: { id: true, status: true, userId: true },
+      select: { id: true, batchId: true, status: true, userId: true },
     })
     if (!image) throw new NotFoundException('图片不存在')
     if (image.status !== 'approved' && viewer?.role !== 'admin' && viewer?.id !== image.userId) {
       throw new NotFoundException('图片不存在')
     }
 
+    // 评论区整组共用：无论从同批哪一张进来，看到的都是同一套评论
+    const targetId = await engagementTargetId(this.prisma, image)
+
     const pageNum = parsePage(page)
     const sizeNum = parseSize(size)
     const [data, total] = await Promise.all([
       this.prisma.comment.findMany({
-        where: { imageId },
+        where: { imageId: targetId },
         orderBy: { createdAt: 'desc' },
         skip: (pageNum - 1) * sizeNum,
         take: sizeNum,
         include: { user: { select: { id: true, username: true, avatarUrl: true } } },
       }),
-      this.prisma.comment.count({ where: { imageId } }),
+      this.prisma.comment.count({ where: { imageId: targetId } }),
     ])
 
     return {
@@ -55,17 +59,20 @@ export class CommentsService {
 
     const image = await this.prisma.image.findUnique({
       where: { id: imageId },
-      select: { id: true, status: true },
+      select: { id: true, batchId: true, status: true },
     })
     if (!image || image.status !== 'approved') throw new NotFoundException('图片不存在')
 
+    // 评论记在批次封面上，整组共用
+    const targetId = await engagementTargetId(this.prisma, image)
+
     const [comment] = await this.prisma.$transaction([
       this.prisma.comment.create({
-        data: { imageId, userId, content },
+        data: { imageId: targetId, userId, content },
         include: { user: { select: { id: true, username: true, avatarUrl: true } } },
       }),
       this.prisma.image.update({
-        where: { id: imageId },
+        where: { id: targetId },
         data: { commentCount: { increment: 1 } },
       }),
     ])

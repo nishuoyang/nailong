@@ -76,6 +76,10 @@ const statusMutation = useMutation({
   onSuccess: (_, variables) => {
     queryClient.invalidateQueries({ queryKey: ['admin-images'] })
     queryClient.invalidateQueries({ queryKey: ['admin-stats'] })
+    // 审核会改变公开计数，首页/标签页的分类、标签数字必须一起失效，
+    // 否则会继续按 10 分钟的 staleTime 显示旧数字。
+    queryClient.invalidateQueries({ queryKey: ['categories'] })
+    queryClient.invalidateQueries({ queryKey: ['tags'] })
     toast.success(variables.status === 'approved' ? '已通过' : variables.status === 'rejected' ? '已拒绝' : '状态已更新')
   },
   onError: (err: any) => toast.error(err.response?.data?.message || '操作失败'),
@@ -96,6 +100,8 @@ const deleteMutation = useMutation({
   onSuccess: () => {
     queryClient.invalidateQueries({ queryKey: ['admin-images'] })
     queryClient.invalidateQueries({ queryKey: ['admin-stats'] })
+    queryClient.invalidateQueries({ queryKey: ['categories'] })
+    queryClient.invalidateQueries({ queryKey: ['tags'] })
     deleteTarget.value = null
     toast.success('图片已删除')
   },
@@ -136,6 +142,8 @@ const editMutation = useMutation({
   onSuccess: () => {
     queryClient.invalidateQueries({ queryKey: ['admin-images'] })
     queryClient.invalidateQueries({ queryKey: ['image', editingId.value] })
+    queryClient.invalidateQueries({ queryKey: ['categories'] })
+    queryClient.invalidateQueries({ queryKey: ['tags'] })
     editOpen.value = false
     toast.success('已保存')
   },
@@ -243,6 +251,13 @@ const statusMeta: Record<string, { label: string; cls: string }> = {
             <div class="flex flex-wrap items-center gap-2">
               <RouterLink :to="`/images/${image.id}`" class="max-w-full truncate text-[13px] font-semibold text-ink no-underline hover:text-accent">{{ image.title }}</RouterLink>
               <span v-if="image.isFeatured" class="rounded-full bg-butter/30 px-2 py-0.5 font-mono text-[8px] uppercase tracking-wide text-ink">精选</span>
+              <span
+                v-if="(image.batchSize ?? 1) > 1"
+                class="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 font-mono text-[8px] text-ink-2"
+                :title="`一次投稿 ${image.batchSize} 张，通过/拒绝/删除都会作用于整组`"
+              >
+                <AppIcon name="layers" :size="9" /> {{ image.batchSize }} 张一组
+              </span>
               <span class="rounded-full px-2 py-0.5 font-mono text-[8px]" :class="statusMeta[image.status]?.cls">{{ statusMeta[image.status]?.label || image.status }}</span>
             </div>
             <p class="mt-1 line-clamp-1 text-[11px] text-muted">{{ image.description || '没有描述' }}</p>
@@ -325,7 +340,11 @@ const statusMeta: Record<string, { label: string; cls: string }> = {
     <!-- delete confirm -->
     <UiModal :model-value="!!deleteTarget" title="删除图片" width="440px" @update:model-value="deleteTarget = null">
       <p class="text-sm leading-relaxed text-ink-2">
-        确定删除「{{ deleteTarget?.title }}」吗？图片文件、评论和收藏记录都会一并删除，无法撤销。
+        确定删除「{{ deleteTarget?.title }}」吗？
+        <template v-if="(deleteTarget?.batchSize ?? 1) > 1">
+          这是一组的 {{ deleteTarget?.batchSize }} 张图，会整组一起删除（审核也是整组生效）。
+        </template>
+        图片文件、评论和收藏记录都会一并删除，无法撤销。
       </p>
       <div class="mt-6 flex justify-end gap-2">
         <UiButton variant="ghost" @click="deleteTarget = null">取消</UiButton>

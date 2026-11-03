@@ -145,6 +145,14 @@ function makeMeme() {
       </span>
 
       <span
+        v-if="(image.batchSize ?? 1) > 1"
+        class="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full border border-white/25 bg-black/55 px-2 py-1 font-mono text-[8px] uppercase tracking-wide text-white backdrop-blur-sm"
+        :title="`这是一组 ${image.batchSize} 张图，点进去可以左右翻看`"
+      >
+        <AppIcon name="layers" :size="10" /> {{ image.batchSize }}
+      </span>
+
+      <span
         v-if="image.isFeatured"
         class="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full border border-ink/20 bg-butter px-2 py-1 font-mono text-[9px] font-semibold uppercase tracking-wide text-[#181510]"
       >
@@ -156,7 +164,7 @@ function makeMeme() {
         v-if="compact"
         class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-2 pt-8 text-[11px] text-white"
       >
-        <p class="truncate font-medium">{{ image.title }}</p>
+        <p class="truncate pr-12 font-medium">{{ image.title }}</p>
       </div>
     </div>
 

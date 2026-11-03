@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/vue-query'
 import {
   downloadImage,
   getImageById,
@@ -40,9 +46,14 @@ const pickerOpen = ref(false)
 const commentText = ref('')
 const confirmingDelete = ref<string | null>(null)
 
-const { data: image, isLoading, isError } = useQuery({
+const { data: image, isLoading, isError, isFetching } = useQuery({
   queryKey: ['image', imageId],
   queryFn: () => getImageById(imageId.value).then((r) => r.data.data),
+  // 同批次左右切换时沿用上一张的数据，避免整页闪回骨架屏；
+  // 新数据到达后整体替换（标题/描述/统计本来就是这一张自己的）。
+  placeholderData: keepPreviousData,
+  // 切回标签页不重新拉详情：详情接口会记一次浏览，反复聚焦不该把浏览数刷上去
+  refetchOnWindowFocus: false,
 })
 
 const { data: related, isLoading: relatedLoading } = useQuery({
@@ -57,8 +68,12 @@ const { data: author } = useQuery({
   enabled: computed(() => !!image.value?.userId),
 })
 
+// 评论区整组共用：同一批图共用一个缓存键，切换图片不会重新拉一遍，
+// 也不会出现「在这里评论完、翻一张就看不见」的错觉。
+const commentTarget = computed(() => image.value?.batch?.id ?? imageId.value)
+
 const commentsQuery = useInfiniteQuery({
-  queryKey: computed(() => ['comments', imageId.value]),
+  queryKey: computed(() => ['comments', commentTarget.value]),
   queryFn: ({ pageParam }) =>
     getComments(imageId.value, pageParam as number).then((r) => ({
       ...r.data,
@@ -83,6 +98,75 @@ const detailAspect = computed(() => {
 
 const isSelf = computed(() => auth.user?.id === image.value?.userId)
 
+// ── 同批次左右切换 ──
+// 一次投稿的多张图共享 batchId，详情页按 batch.items 翻页。
+// 下标取接口返回的 batch.index（而不是路由 id），这样数据没换回来之前，
+// 计数、缩略图高亮和画面上那张图始终是一致的。
+const batchItems = computed(() => image.value?.batch?.items ?? [])
+const batchTotal = computed(() => batchItems.value.length || 1)
+const batchIndex = computed(() => image.value?.batch?.index ?? 0)
+const canPrev = computed(() => batchIndex.value > 0)
+const canNext = computed(() => batchIndex.value < batchTotal.value - 1)
+
+/**
+ * 预取相邻两张的缩略图。
+ *
+ * 这些是 MinIO 里的静态对象（immutable 缓存），提前放进 HTTP 缓存不会多计浏览，
+ * 切换时图片直接从缓存出，不会出现「先空白一下再出来」的闪动。
+ */
+const prefetchedImages: HTMLImageElement[] = []
+watch(
+  [batchItems, batchIndex],
+  ([items, index]) => {
+    for (const offset of [-1, 1]) {
+      const src = items[index + offset]?.thumbnailUrl || items[index + offset]?.thumbnailSmUrl
+      if (!src) continue
+      const img = new Image()
+      img.decoding = 'async'
+      img.src = src
+      prefetchedImages.push(img)
+    }
+    // 只留最近几张，避免翻很多次以后一直持有引用
+    if (prefetchedImages.length > 6) prefetchedImages.splice(0, prefetchedImages.length - 6)
+  },
+  { immediate: true },
+)
+
+/** 切换用 replace：不往浏览历史里塞一串同组图片，返回键仍回到上一页。 */
+function goToBatch(index: number) {
+  const target = batchItems.value[index]
+  if (!target || target.id === imageId.value) return
+  router.replace({ name: 'image-detail', params: { id: target.id } })
+}
+
+function prevImage() {
+  if (canPrev.value) goToBatch(batchIndex.value - 1)
+}
+
+function nextImage() {
+  if (canNext.value) goToBatch(batchIndex.value + 1)
+}
+
+/**
+ * 方向键翻页。
+ * 输入框里按左右键是移动光标，不能抢；大图模式下由 lightbox 自己处理，
+ * 这里直接让位，避免一次按键翻两张。
+ */
+function onKeyNav(event: KeyboardEvent) {
+  if (lightboxOpen.value || pickerOpen.value) return
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  if (batchTotal.value <= 1) return
+  const target = event.target as HTMLElement | null
+  const tag = target?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return
+  event.preventDefault()
+  if (event.key === 'ArrowLeft') prevImage()
+  else nextImage()
+}
+
+onMounted(() => window.addEventListener('keydown', onKeyNav))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeyNav))
+
 watch(
   () => image.value?.title,
   (title) => {
@@ -90,12 +174,25 @@ watch(
   },
 )
 
+/**
+ * 点赞/收藏/评论/下载都是整组共用的数据。
+ * 本地缓存也要同步到同批每一张，否则翻到下一张时会先看到旧的数字再跳变。
+ */
+function patchBatch(patch: (old: ImageItem) => ImageItem) {
+  const ids = batchItems.value.length ? batchItems.value.map((item) => item.id) : [imageId.value]
+  for (const id of ids) {
+    queryClient.setQueryData(['image', id], (old: ImageItem | undefined) => (old ? patch(old) : old))
+  }
+}
+
 const likeMutation = useMutation({
   mutationFn: () => likeImage(imageId.value),
   onSuccess: (res) => {
-    queryClient.setQueryData(['image', imageId.value], (old: ImageItem | undefined) =>
-      old ? { ...old, isLiked: res.data.data.liked, likeCount: res.data.data.likeCount } : old,
-    )
+    patchBatch((old) => ({
+      ...old,
+      isLiked: res.data.data.liked,
+      likeCount: res.data.data.likeCount,
+    }))
   },
   onError: () => toast.error('操作失败，稍后再试'),
 })
@@ -103,15 +200,11 @@ const likeMutation = useMutation({
 const favoriteMutation = useMutation({
   mutationFn: () => toggleFavorite(imageId.value),
   onSuccess: (res) => {
-    queryClient.setQueryData(['image', imageId.value], (old: ImageItem | undefined) =>
-      old
-        ? {
-            ...old,
-            isFavorited: res.data.data.favorited,
-            favoriteCount: res.data.data.favoriteCount,
-          }
-        : old,
-    )
+    patchBatch((old) => ({
+      ...old,
+      isFavorited: res.data.data.favorited,
+      favoriteCount: res.data.data.favoriteCount,
+    }))
     toast.success(res.data.data.favorited ? '已收进收藏夹' : '已取消收藏')
   },
   onError: () => toast.error('操作失败，稍后再试'),
@@ -140,10 +233,8 @@ const commentMutation = useMutation({
   mutationFn: (content: string) => createComment(imageId.value, content),
   onSuccess: () => {
     commentText.value = ''
-    queryClient.invalidateQueries({ queryKey: ['comments', imageId.value] })
-    queryClient.setQueryData(['image', imageId.value], (old: ImageItem | undefined) =>
-      old ? { ...old, commentCount: (old.commentCount ?? 0) + 1 } : old,
-    )
+    queryClient.invalidateQueries({ queryKey: ['comments', commentTarget.value] })
+    patchBatch((old) => ({ ...old, commentCount: (old.commentCount ?? 0) + 1 }))
     toast.success('评论已发布')
   },
   onError: (err: any) => toast.error(err.response?.data?.message || '评论发布失败'),
@@ -153,10 +244,8 @@ const deleteMutation = useMutation({
   mutationFn: (id: string) => deleteComment(id),
   onSuccess: () => {
     confirmingDelete.value = null
-    queryClient.invalidateQueries({ queryKey: ['comments', imageId.value] })
-    queryClient.setQueryData(['image', imageId.value], (old: ImageItem | undefined) =>
-      old ? { ...old, commentCount: Math.max(0, (old.commentCount ?? 0) - 1) } : old,
-    )
+    queryClient.invalidateQueries({ queryKey: ['comments', commentTarget.value] })
+    patchBatch((old) => ({ ...old, commentCount: Math.max(0, (old.commentCount ?? 0) - 1) }))
     toast.success('评论已删除')
   },
   onError: (err: any) => toast.error(err.response?.data?.message || '删除失败'),
@@ -171,9 +260,7 @@ const downloadMutation = useMutation({
     document.body.appendChild(anchor)
     anchor.click()
     document.body.removeChild(anchor)
-    queryClient.setQueryData(['image', imageId.value], (old: ImageItem | undefined) =>
-      old ? { ...old, downloadCount: (old.downloadCount ?? 0) + 1 } : old,
-    )
+    patchBatch((old) => ({ ...old, downloadCount: (old.downloadCount ?? 0) + 1 }))
     toast.success('开始下载原图')
   },
   onError: (err: any) => toast.error(err.response?.data?.message || '下载失败'),
@@ -307,6 +394,7 @@ function onComposerKeydown(event: KeyboardEvent) {
                 :alt="image.title"
                 :style="detailAspect ? { aspectRatio: detailAspect } : undefined"
                 class="max-h-[72vh] max-w-full cursor-zoom-in rounded-[16px] object-contain shadow-[0_20px_60px_-30px_rgba(20,15,8,.6)] transition duration-500 group-hover:scale-[1.005] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+                :class="isFetching ? 'opacity-80' : 'opacity-100'"
                 decoding="async"
                 fetchpriority="high"
                 tabindex="0"
@@ -315,15 +403,63 @@ function onComposerKeydown(event: KeyboardEvent) {
                 @click="lightboxOpen = true"
                 @keydown.enter.prevent="lightboxOpen = true"
               />
+
+              <!-- 同批次翻页 -->
+              <template v-if="batchTotal > 1">
+                <span class="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-ink/15 bg-paper/90 px-3 py-1.5 font-mono text-[10px] tracking-[0.08em] text-ink shadow-sm backdrop-blur-sm">
+                  <AppIcon name="layers" :size="11" /> {{ batchIndex + 1 }} / {{ batchTotal }}
+                </span>
+                <button
+                  class="absolute left-2 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full border border-ink/15 bg-paper/90 text-ink shadow-[0_8px_24px_-12px_rgba(20,15,8,.6)] transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-25 sm:left-4"
+                  :disabled="!canPrev"
+                  aria-label="上一张"
+                  @click="prevImage"
+                >
+                  <AppIcon name="chevron-left" :size="20" />
+                </button>
+                <button
+                  class="absolute right-2 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full border border-ink/15 bg-paper/90 text-ink shadow-[0_8px_24px_-12px_rgba(20,15,8,.6)] transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-25 sm:right-4"
+                  :disabled="!canNext"
+                  aria-label="下一张"
+                  @click="nextImage"
+                >
+                  <AppIcon name="chevron-right" :size="20" />
+                </button>
+              </template>
+
               <span class="absolute bottom-5 right-5 hidden items-center gap-1.5 rounded-full border border-white/30 bg-black/35 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-white backdrop-blur-sm group-hover:flex">
                 <AppIcon name="zoom" :size="12" /> 点击看大图
               </span>
             </div>
           </div>
 
+          <!-- 同组缩略图：点一下直接跳过去，也让人知道这组一共有几张 -->
+          <div v-if="batchTotal > 1" class="mt-3 flex gap-2 overflow-x-auto px-1 pb-1 no-scrollbar">
+            <button
+              v-for="(item, index) in batchItems"
+              :key="item.id"
+              class="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 bg-surface-2 transition"
+              :class="index === batchIndex ? 'border-ink' : 'border-transparent hover:border-line-strong'"
+              :aria-label="`查看第 ${index + 1} 张`"
+              :aria-current="index === batchIndex"
+              @click="goToBatch(index)"
+            >
+              <img
+                :src="item.thumbnailSmUrl || item.thumbnailUrl || image.url"
+                alt=""
+                class="h-full w-full object-cover"
+                loading="lazy"
+                decoding="async"
+              />
+            </button>
+            <span class="ml-1 self-center font-mono text-[9px] uppercase tracking-[0.14em] text-muted">
+              同一组投稿 · 共 {{ batchTotal }} 张
+            </span>
+          </div>
+
           <div class="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-muted">
             <span class="font-mono">{{ image.width && image.height ? `${image.width} × ${image.height}` : '原图尺寸未知' }}</span>
-            <span>{{ formatDate(image.createdAt) }} 发布</span>
+            <span class="font-mono">{{ batchTotal > 1 ? `第 ${batchIndex + 1} / ${batchTotal} 张 · ` : '' }}{{ formatDate(image.createdAt) }} 发布</span>
           </div>
         </div>
 
@@ -549,6 +685,12 @@ function onComposerKeydown(event: KeyboardEvent) {
       :src="image.thumbnailUrl || image.url"
       :alt="image.title"
       :title="image.title"
+      :has-nav="batchTotal > 1"
+      :prev-disabled="!canPrev"
+      :next-disabled="!canNext"
+      :index-label="`${batchIndex + 1} / ${batchTotal}`"
+      @prev="prevImage"
+      @next="nextImage"
     >
       <button class="inline-flex h-9 items-center gap-1.5 rounded-full border border-white/20 px-4 text-xs text-white/80 transition hover:border-white/60 hover:text-white" @click="handleDownload">
         <AppIcon name="download" :size="14" /> 下载原图

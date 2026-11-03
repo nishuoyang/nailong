@@ -75,9 +75,14 @@ export class ImagesController {
   @Get('images/:id')
   async findById(
     @Param('id') id: string,
+    @Req() req: Request,
     @CurrentUser() user?: { id: string },
   ) {
-    return this.imagesService.findById(id, user?.id)
+    // viewer 信息用于批次浏览去重（同一访客短窗口内只计一次），不影响其它逻辑
+    return this.imagesService.findById(id, user?.id, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    })
   }
 
   // 文件代理：通过服务端流式传输 MinIO 文件，解决跨域下载问题

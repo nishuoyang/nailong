@@ -6,6 +6,9 @@ const router = createRouter({
   scrollBehavior(to, from, savedPosition) {
     if (savedPosition) return savedPosition
     if (to.hash) return { el: to.hash, behavior: 'smooth', top: 96 }
+    // 同一组的图片之间左右切换（/images/a → /images/b）不是「跳页」，
+    // 不该把滚动条拉回顶部，否则每次翻页都要重新往下滚。
+    if (to.name === 'image-detail' && from.name === 'image-detail') return false
     if (to.path === from.path) return false
     return { top: 0 }
   },
